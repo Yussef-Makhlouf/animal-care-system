@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار تسجيل الدخول</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            direction: rtl;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔐 اختبار تسجيل الدخول المباشر</h1>
+    
+    <form id="loginForm">
+        <div class="form-group">
+            <label for="email">البريد الإلكتروني:</label>
+            <input type="email" id="email" value="admin@ahcp.gov.sa" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="password">كلمة المرور:</label>
+            <input type="password" id="password" value="Admin@123456" required>
+        </div>
+        
+        <button type="submit">تسجيل الدخول</button>
+    </form>
+
+    <div id="result"></div>
+
+    <div class="info">
+        <h3>بيانات تسجيل الدخول المتاحة:</h3>
+        <p><strong>1. المدير العام:</strong><br>
+        البريد: admin@ahcp.gov.sa<br>
+        كلمة المرور: Admin@123456</p>
+        
+        <p><strong>2. إبراهيم أحمد:</strong><br>
+        البريد: ibrahim@ahcp.gov.eg<br>
+        كلمة المرور: admin123</p>
+        
+        <p><strong>3. مشرف القسم:</strong><br>
+        البريد: supervisor@ahcp.gov.sa<br>
+        كلمة المرور: Supervisor@123</p>
+        
+        <p><strong>4. العامل الميداني:</strong><br>
+        البريد: worker@ahcp.gov.sa<br>
+        كلمة المرور: Worker@123</p>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.innerHTML = '<div class="info">جاري المحاولة...</div>';
+            
+            try {
+                console.log('🔗 Attempting login to:', 'http://localhost:3001/api/auth/login');
+                console.log('📧 Email:', email);
+                console.log('🔑 Password length:', password.length);
+                
+                const response = await fetch('http://localhost:3001/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password
+                    })
+                });
+                
+                console.log('📡 Response status:', response.status);
+                console.log('📡 Response headers:', response.headers);
+                
+                const data = await response.json();
+                console.log('📦 Response data:', data);
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            ✅ تم تسجيل الدخول بنجاح!
+                            
+                            المستخدم: ${data.data.user.name}
+                            البريد: ${data.data.user.email}
+                            الدور: ${data.data.user.role}
+                            التوكين: ${data.data.token.substring(0, 50)}...
+                            
+                            يمكنك الآن استخدام هذه البيانات في النظام الرئيسي.
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="error">
+                            ❌ فشل تسجيل الدخول
+                            
+                            الرسالة: ${data.message}
+                            الخطأ: ${data.error || 'غير محدد'}
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                console.error('❌ Login error:', error);
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        ❌ خطأ في الاتصال
+                        
+                        الخطأ: ${error.message}
+                        
+                        تأكد من:
+                        1. تشغيل الخادم الخلفي على المنفذ 3001
+                        2. عدم وجود مشاكل في CORS
+                        3. صحة عنوان الخادم
+                    </div>
+                `;
+            }
+        });
+        
+        // Test server connectivity
+        async function testServerConnection() {
+            try {
+                const response = await fetch('http://localhost:3001/health');
+                const data = await response.json();
+                console.log('✅ Server is running:', data);
+            } catch (error) {
+                console.error('❌ Server connection failed:', error);
+            }
+        }
+        
+        // Run connectivity test on page load
+        testServerConnection();
+    </script>
+</body>
+</html>

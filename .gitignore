@@ -1,0 +1,58 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Next.js build outputs
+.next/
+out/
+build/
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Debug logs
+logs/
+*.log
+
+# Testing
+coverage/
+.nyc_output/
+
+# Build artifacts
+*.tsbuildinfo
+
+# Upload directories
+uploads/
+public/uploads/
+
+# Temporary files
+.tmp/
+.temp/
+.cache/
+
+# Local development files
+*.local
+
+# Production files
+.vercel
+.netlify
+
+# Misc
+.DS_Store
+Thumbs.db
