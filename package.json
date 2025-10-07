@@ -1,5 +1,21 @@
 {
-  "dependencies": {
-    "axios": "^1.12.2"
-  }
+  "name": "ahcp-system",
+  "version": "1.0.0",
+  "description": "Animal Health Care Program - Complete System",
+  "scripts": {
+    "install-all": "npm install && cd ahcp-backend && npm install && cd ../ahcp-dashboard && npm install",
+    "start-dev": "start-development.bat",
+    "start-prod": "start-production.bat",
+    "build": "cd ahcp-dashboard && npm run build",
+    "seed": "cd ahcp-backend && node src/scripts/seed.js",
+    "test": "cd ahcp-backend && npm test"
+  },
+  "keywords": [
+    "animal-health",
+    "veterinary",
+    "healthcare",
+    "management-system"
+  ],
+  "author": "AHCP Development Team",
+  "license": "MIT"
 }

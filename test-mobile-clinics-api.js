@@ -9,8 +9,8 @@ async function testMobileClinicsAPI() {
         // First, login to get a token
         console.log('1. Logging in to get auth token...');
         const loginResponse = await axios.post(`${API_BASE_URL}/auth/login`, {
-            email: 'admin@ahcp.com',
-            password: 'admin123'
+            email: 'admin@ahcp.gov.sa',
+            password: 'Admin@123456'
         });
 
         if (!loginResponse.data.success) {
@@ -44,24 +44,48 @@ async function testMobileClinicsAPI() {
             
             const testRecord = {
                 serialNo: `MC-${Date.now()}`,
-                date: new Date().toISOString().split('T')[0],
-                owner: {
+                date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0], // أمس لتجنب مشاكل التوقيت
+                // إرسال بيانات العميل للإنشاء (بدلاً من ObjectId)
+                client: {
                     name: 'أحمد محمد الأحمد',
-                    id: '1234567890',
-                    phone: '+966501234567'
+                    nationalId: '1234567890',
+                    phone: '+966501234567',
+                    village: 'الرياض',
+                    detailedAddress: 'حي النخيل، شارع الملك فهد'
+                },
+                farmLocation: 'مزرعة الأحمد',
+                coordinates: {
+                    latitude: 24.7136,
+                    longitude: 46.6753
                 },
                 supervisor: 'د. محمد علي',
-                vehicleNo: 'ABC-123',
-                farmLocation: 'الرياض - حي النخيل',
-                sheep: 50,
-                goats: 30,
-                camel: 5,
-                horse: 2,
-                cattle: 10,
-                diagnosis: 'فحص روتيني للقطيع',
-                interventionCategory: 'Routine',
-                treatment: 'تحصينات وقائية وعلاج طفيليات',
-                remarks: 'حالة القطيع جيدة بشكل عام'
+                vehicleNo: 'MC1',
+                animalCounts: {
+                    sheep: 50,
+                    goats: 30,
+                    camel: 5,
+                    cattle: 10,
+                    horse: 2
+                },
+                diagnosis: 'التهاب رئوي',
+                interventionCategory: 'Emergency',
+                treatment: 'مضادات حيوية وأدوية مضادة للالتهاب',
+                medicationsUsed: [
+                    {
+                        name: 'أموكسيسيلين',
+                        dosage: '500mg',
+                        quantity: 10,
+                        route: 'Injection'
+                    }
+                ],
+                request: {
+                    date: new Date().toISOString().split('T')[0],
+                    situation: 'Open',
+                    fulfillingDate: null
+                },
+                followUpRequired: true,
+                followUpDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                remarks: 'تحسن ملحوظ في حالة الحيوانات'
             };
 
             const createResponse = await axios.post(`${API_BASE_URL}/mobile-clinics`, testRecord, {

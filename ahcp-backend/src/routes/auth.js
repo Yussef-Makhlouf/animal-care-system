@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { validate, schemas } = require('../middleware/validation');
-const { auth, authorize } = require('../middleware/auth');
+const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 
 const router = express.Router();
@@ -186,7 +186,7 @@ router.post('/login',
     });
   })
 );
-
+ 
 /**
  * @swagger
  * /api/auth/me:
@@ -569,6 +569,219 @@ router.put('/users/:id/toggle-status',
       data: {
         user
       }
+    });
+  })
+);
+
+/**
+ * @swagger
+ * /api/auth/supervisors:
+ *   get:
+ *     summary: Get all supervisors for dropdown
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Supervisors retrieved successfully
+ *       401:
+ *         description: Authentication required
+ */
+// Cache for supervisors (5 minutes)
+let supervisorsCache = null;
+let cacheTimestamp = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+router.get('/supervisors',
+  optionalAuth, // استخدام optional auth بدلاً من auth الإجباري
+  asyncHandler(async (req, res) => {
+    try {
+      // Set CORS headers explicitly
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+      
+      // Prevent caching for fresh data
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
+      // Check cache first for performance
+      const now = Date.now();
+      if (supervisorsCache && (now - cacheTimestamp) < CACHE_DURATION) {
+        console.log('📋 Returning cached supervisors');
+        return res.json({
+          success: true,
+          data: supervisorsCache,
+          cached: true,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      console.log('🔍 Fetching supervisors from database...');
+      
+      // Get all active users with supervisor roles - optimized query
+      const supervisors = await User.find(
+        {
+          role: { $in: ['super_admin', 'section_supervisor'] },
+          isActive: true
+        },
+        'name email role section', // projection for better performance
+        {
+          sort: { name: 1 },
+          lean: true // faster query
+        }
+      );
+
+      // Update cache
+      supervisorsCache = supervisors;
+      cacheTimestamp = now;
+
+      console.log(`✅ Found ${supervisors.length} supervisors`);
+      
+      res.json({
+        success: true,
+        data: supervisors,
+        cached: false,
+        timestamp: new Date().toISOString(),
+        count: supervisors.length
+      });
+    } catch (error) {
+      console.error('❌ Error fetching supervisors:', error);
+      res.status(500).json({
+        success: false,
+        message: 'خطأ في جلب بيانات المشرفين',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  })
+);
+
+// Clear cache endpoint for development
+router.post('/supervisors/clear-cache',
+  asyncHandler(async (req, res) => {
+    supervisorsCache = null;
+    cacheTimestamp = 0;
+    console.log('🗑️ Supervisors cache cleared');
+    res.json({
+      success: true,
+      message: 'Cache cleared successfully'
+    });
+  })
+);
+
+/**
+ * @swagger
+ * /api/auth/supervisors/by-section/{section}:
+ *   get:
+ *     summary: Get supervisors by section
+ *     tags: [Authentication]
+ *     parameters:
+ *       - in: path
+ *         name: section
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Section name to filter supervisors
+ *     responses:
+ *       200:
+ *         description: Supervisors retrieved successfully
+ *       404:
+ *         description: No supervisors found for this section
+ */
+router.get('/supervisors/by-section/:section',
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    try {
+      const { section } = req.params;
+      
+      console.log(`🔍 Fetching supervisors for section: ${section}`);
+      
+      // Get supervisors for specific section with flexible matching
+      const query = {
+        role: 'section_supervisor', // Only section supervisors, no super_admin
+        isActive: true
+      };
+
+      // Add section filter - support both exact match and contains
+      if (section && section !== 'all') {
+        query.$or = [
+          { section: section }, // Exact match
+          { section: { $regex: section, $options: 'i' } } // Case insensitive contains
+        ];
+      }
+
+      let supervisors = await User.find(
+        query,
+        'name email role section',
+        {
+          sort: { name: 1 },
+          lean: true
+        }
+      );
+      
+      // إذا لم نجد مشرفين للقسم المحدد، نجلب المشرفين العامين كـ fallback
+      if (supervisors.length === 0 && section && section !== 'all') {
+        console.log(`⚠️ No supervisors found for section: ${section}, falling back to super_admin`);
+        supervisors = await User.find(
+          {
+            role: 'super_admin',
+            isActive: true
+          },
+          'name email role section',
+          {
+            sort: { name: 1 },
+            lean: true
+          }
+        );
+      }
+      
+      console.log(`✅ Found ${supervisors.length} supervisors for section: ${section}`);
+      
+      res.json({
+        success: true,
+        data: supervisors,
+        section: section,
+        count: supervisors.length,
+        timestamp: new Date().toISOString(),
+        fallback: supervisors.length > 0 && supervisors[0]?.role === 'super_admin'
+      });
+    } catch (error) {
+      console.error('❌ Error fetching supervisors by section:', error);
+      res.status(500).json({
+        success: false,
+        message: 'خطأ في جلب بيانات المشرفين',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Logout user
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *       401:
+ *         description: Authentication required
+ */
+router.post('/logout',
+  auth,
+  asyncHandler(async (req, res) => {
+    // في نظام JWT، لا نحتاج لتنفيذ خاص على الخادم للـ logout
+    // يمكن إضافة token إلى blacklist إذا أردنا ذلك
+    
+    res.json({
+      success: true,
+      message: 'تم تسجيل الخروج بنجاح'
     });
   })
 );

@@ -1,37 +1,36 @@
 @echo off
 echo ========================================
-echo   تشغيل سريع - نظام إدارة الصحة الحيوانية
+echo    بدء تشغيل نظام AHCP
 echo ========================================
 echo.
 
-:: إنشاء ملف .env.local إذا لم يكن موجوداً
-if not exist "ahcp-dashboard\.env.local" (
-    echo 📝 إنشاء ملف .env.local...
-    echo NODE_ENV=development > "ahcp-dashboard\.env.local"
-    echo NEXT_PUBLIC_API_URL=http://localhost:3001/api >> "ahcp-dashboard\.env.local"
-    echo NEXT_PUBLIC_APP_URL=http://localhost:3000 >> "ahcp-dashboard\.env.local"
-    echo NEXT_PUBLIC_DEV_MODE=true >> "ahcp-dashboard\.env.local"
-)
-
-echo 🚀 بدء تشغيل النظام...
-echo.
-
-:: تشغيل الخادم الخلفي
-echo 🔧 تشغيل الخادم الخلفي...
-start "Backend" cmd /k "cd /d %cd%\ahcp-backend && set NODE_ENV=development && npm run dev"
-
-:: انتظار 3 ثواني
-timeout /t 3 /nobreak >nul
-
-:: تشغيل الواجهة الأمامية
-echo 🎨 تشغيل الواجهة الأمامية...
-start "Frontend" cmd /k "cd /d %cd%\ahcp-dashboard && set NODE_ENV=development && npm run dev"
+echo 1. تشغيل الباك إند...
+start "Backend Server" cmd /k "cd ahcp-backend && npm run dev"
 
 echo.
-echo ✅ تم تشغيل النظام!
+echo 2. انتظار 5 ثواني...
+timeout /t 5 /nobreak > nul
+
 echo.
-echo 🌐 لوحة التحكم: http://localhost:3000
-echo 🔧 API الخادم: http://localhost:3001
+echo 3. تشغيل الفرونت إند...
+start "Frontend Server" cmd /k "cd ahcp-dashboard && npm run dev"
+
+echo.
+echo 4. انتظار 10 ثواني...
+timeout /t 10 /nobreak > nul
+
+echo.
+echo 5. فتح المتصفح...
+start http://localhost:3000
+
+echo.
+echo ========================================
+echo    تم تشغيل النظام بنجاح!
+echo ========================================
+echo.
+echo البيانات المطلوبة:
+echo البريد: admin@ahcp.gov.sa
+echo كلمة المرور: Admin@123456
 echo.
 echo اضغط أي مفتاح للخروج...
-pause >nul
+pause > nul
