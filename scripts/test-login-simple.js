@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const User = require('./ahcp-backend/src/models/User');
+const User = require('../ahcp-backend/src/models/User');
 
 async function testUserLogin() {
   try {
