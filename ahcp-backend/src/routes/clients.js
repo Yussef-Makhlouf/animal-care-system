@@ -3,6 +3,7 @@ const Client = require('../models/Client');
 const { validate, validateQuery, schemas } = require('../middleware/validation');
 const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
+const { handleTemplate, handleImport } = require('../utils/importExportHelpers');
 
 const router = express.Router();
 
@@ -69,14 +70,27 @@ router.get('/',
       ];
     }
 
-    // Get clients
-    const clients = await Client.find(filter)
-      .populate('createdBy', 'name email')
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
-
-    const total = await Client.countDocuments(filter);
+    // Get clients with error handling
+    let clients = [];
+    let total = 0;
+    
+    try {
+      clients = await Client.find(filter)
+        .populate('createdBy', 'name email')
+        .skip(skip)
+        .limit(parseInt(limit))
+        .sort({ createdAt: -1 });
+    } catch (findError) {
+      console.error('Error finding clients:', findError);
+      clients = [];
+    }
+    
+    try {
+      total = await Client.countDocuments(filter);
+    } catch (countError) {
+      console.error('Error counting clients:', countError);
+      total = 0;
+    }
 
     res.json({
       success: true,
@@ -125,18 +139,214 @@ router.get('/statistics',
       console.error('Error getting clients statistics:', error);
       
       // Return basic count if aggregation fails
-      const basicStats = {
-        totalClients: await Client.countDocuments(),
+      let basicStats = {
+        totalClients: 0,
         activeClients: 0,
         inactiveClients: 0,
         totalAnimals: 0
       };
+      
+      try {
+        basicStats.totalClients = await Client.countDocuments();
+      } catch (countError) {
+        console.error('Error counting clients:', countError);
+      }
       
       res.json({
         success: true,
         data: basicStats
       });
     }
+  })
+);
+
+/**
+ * @swagger
+ * /api/clients/export:
+ *   get:
+ *     summary: Export clients data
+ *     tags: [Clients]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: format
+ *         schema:
+ *           type: string
+ *           enum: [csv, json, excel]
+ *         description: Export format
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [نشط, غير نشط]
+ *         description: Filter by status
+ *     responses:
+ *       200:
+ *         description: Data exported successfully
+ */
+router.get('/export',
+  auth,
+  asyncHandler(async (req, res) => {
+    const { format = 'json', status } = req.query;
+    
+    const filter = {};
+    if (status) filter.status = status;
+
+    const clients = await Client.find(filter).sort({ createdAt: -1 });
+
+    if (format === 'csv') {
+      const { Parser } = require('json2csv');
+      const fields = [
+        'name',
+        'nationalId',
+        'phone',
+        'email',
+        'village',
+        'detailedAddress',
+        'status',
+        'totalAnimals',
+        'createdAt'
+      ];
+      
+      const parser = new Parser({ fields });
+      const csv = parser.parse(clients);
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=clients.csv');
+      res.send(csv);
+    } else if (format === 'excel') {
+      const XLSX = require('xlsx');
+      
+      // Transform data for Excel export
+      const transformedClients = clients.map(client => ({
+        'Name': client.name || '',
+        'National ID': client.nationalId || '',
+        'Phone': client.phone || '',
+        'Email': client.email || '',
+        'Village': client.village || '',
+        'Detailed Address': client.detailedAddress || '',
+        'Status': client.status || '',
+        'Total Animals': client.totalAnimals || 0,
+        'Created At': client.createdAt ? client.createdAt.toISOString().split('T')[0] : ''
+      }));
+      
+      // Create a new workbook
+      const workbook = XLSX.utils.book_new();
+      
+      // Convert data to worksheet
+      const worksheet = XLSX.utils.json_to_sheet(transformedClients);
+      
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Clients');
+      
+      // Generate Excel file buffer
+      const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=clients.xlsx');
+      res.send(excelBuffer);
+    } else {
+      res.json({
+        success: true,
+        data: { clients }
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
+ * /api/clients/template:
+ *   get:
+ *     summary: Download import template for clients
+ *     tags: [Clients]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Template downloaded successfully
+ */
+router.get('/template',
+  auth,
+  handleTemplate([
+    {
+      'Name': 'اسم العميل',
+      'National ID': 'رقم الهوية',
+      'Phone': 'رقم الهاتف',
+      'Email': 'البريد الإلكتروني',
+      'Village': 'القرية',
+      'Detailed Address': 'العنوان التفصيلي',
+      'Status': 'الحالة',
+      'Birth Date': 'تاريخ الميلاد'
+    }
+  ], 'clients-template')
+);
+
+/**
+ * @swagger
+ * /api/clients/import:
+ *   post:
+ *     summary: Import clients from CSV
+ *     tags: [Clients]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Import completed
+ */
+router.post('/import',
+  auth,
+  authorize('super_admin', 'section_supervisor'),
+  handleImport(Client, Client, async (row, userId, ClientModel, errors) => {
+    // Check if client with same national ID already exists
+    const existingClient = await ClientModel.findOne({ nationalId: row['National ID'] || row['رقم الهوية'] });
+    if (existingClient) {
+      errors.push({
+        row: row.rowNumber,
+        field: 'National ID',
+        message: 'Client with this national ID already exists'
+      });
+      return null;
+    }
+
+    // Parse birth date
+    let birthDate = null;
+    if (row['Birth Date'] || row['تاريخ الميلاد']) {
+      const dateStr = row['Birth Date'] || row['تاريخ الميلاد'];
+      birthDate = new Date(dateStr);
+      if (isNaN(birthDate.getTime())) {
+        birthDate = null;
+      }
+    }
+
+    // Create new client
+    const client = new ClientModel({
+      name: row['Name'] || row['اسم العميل'],
+      nationalId: row['National ID'] || row['رقم الهوية'],
+      phone: row['Phone'] || row['رقم الهاتف'] || '',
+      email: row['Email'] || row['البريد الإلكتروني'] || '',
+      village: row['Village'] || row['القرية'] || '',
+      detailedAddress: row['Detailed Address'] || row['العنوان التفصيلي'] || '',
+      status: row['Status'] || row['الحالة'] || 'نشط',
+      birthDate: birthDate,
+      animals: [],
+      availableServices: [],
+      createdBy: userId
+    });
+
+    await client.save();
+    return client;
   })
 );
 
@@ -512,70 +722,6 @@ router.delete('/:id/animals/:animalIndex',
         success: false,
         message: error.message,
         error: 'ANIMAL_NOT_FOUND'
-      });
-    }
-  })
-);
-
-/**
- * @swagger
- * /api/clients/export:
- *   get:
- *     summary: Export clients data
- *     tags: [Clients]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: format
- *         schema:
- *           type: string
- *           enum: [csv, json]
- *         description: Export format
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [نشط, غير نشط]
- *         description: Filter by status
- *     responses:
- *       200:
- *         description: Data exported successfully
- */
-router.get('/export',
-  auth,
-  asyncHandler(async (req, res) => {
-    const { format = 'json', status } = req.query;
-    
-    const filter = {};
-    if (status) filter.status = status;
-
-    const clients = await Client.find(filter).sort({ createdAt: -1 });
-
-    if (format === 'csv') {
-      const { Parser } = require('json2csv');
-      const fields = [
-        'name',
-        'nationalId',
-        'phone',
-        'email',
-        'village',
-        'detailedAddress',
-        'status',
-        'totalAnimals',
-        'createdAt'
-      ];
-      
-      const parser = new Parser({ fields });
-      const csv = parser.parse(clients);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=clients.csv');
-      res.send(csv);
-    } else {
-      res.json({
-        success: true,
-        data: { clients }
       });
     }
   })

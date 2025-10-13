@@ -5,7 +5,7 @@ const { validate, validateQuery, schemas } = require('../middleware/validation')
 const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { checkSectionAccessWithMessage } = require('../middleware/sectionAuth');
-const { findOrCreateClient } = require('../utils/importExportHelpers');
+const { findOrCreateClient, parseFileData } = require('../utils/importExportHelpers');
 
 const router = express.Router();
 
@@ -158,25 +158,33 @@ router.get('/statistics',
       });
 
       // إجمالي الحيوانات المفحوصة
-      const animalStats = await MobileClinic.aggregate([
-        { $match: filter },
-        {
-          $group: {
-            _id: null,
-            totalAnimals: {
-              $sum: {
-                $add: [
-                  { $ifNull: ['$sheep', 0] },
-                  { $ifNull: ['$goats', 0] },
-                  { $ifNull: ['$camel', 0] },
-                  { $ifNull: ['$horse', 0] },
-                  { $ifNull: ['$cattle', 0] }
-                ]
+      let totalAnimalsExamined = 0;
+      try {
+        const animalStats = await MobileClinic.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: null,
+              totalAnimals: {
+                $sum: {
+                  $add: [
+                    { $ifNull: ['$animalCounts.sheep', 0] },
+                    { $ifNull: ['$animalCounts.goats', 0] },
+                    { $ifNull: ['$animalCounts.camel', 0] },
+                    { $ifNull: ['$animalCounts.horse', 0] },
+                    { $ifNull: ['$animalCounts.cattle', 0] }
+                  ]
+                }
               }
             }
           }
-        }
-      ]);
+        ]);
+        totalAnimalsExamined = animalStats.length > 0 ? animalStats[0].totalAnimals : 0;
+      } catch (aggregationError) {
+        console.warn('Animal stats aggregation failed, using fallback:', aggregationError.message);
+        // Fallback: get basic count without aggregation
+        totalAnimalsExamined = 0;
+      }
 
       // الحالات الطارئة
       const emergencyCases = await MobileClinic.countDocuments({
@@ -187,7 +195,7 @@ router.get('/statistics',
       const statistics = {
         totalRecords,
         recordsThisMonth,
-        totalAnimalsExamined: animalStats.length > 0 ? animalStats[0].totalAnimals : 0,
+        totalAnimalsExamined,
         emergencyCases
       };
 
@@ -197,11 +205,27 @@ router.get('/statistics',
       });
     } catch (error) {
       console.error('Error getting mobile clinic statistics:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error retrieving statistics',
-        error: error.message
-      });
+      
+      // Return basic statistics if complex queries fail
+      try {
+        const basicStats = {
+          totalRecords: await MobileClinic.countDocuments(filter),
+          recordsThisMonth: 0,
+          totalAnimalsExamined: 0,
+          emergencyCases: 0
+        };
+        
+        res.json({
+          success: true,
+          data: basicStats
+        });
+      } catch (fallbackError) {
+        res.status(500).json({
+          success: false,
+          message: 'Error retrieving statistics',
+          error: error.message
+        });
+      }
     }
   })
 );
@@ -246,7 +270,7 @@ router.get('/follow-up',
  *         name: format
  *         schema:
  *           type: string
- *           enum: [csv, json]
+ *           enum: [csv, json, excel]
  *         description: Export format
  *       - in: query
  *         name: interventionCategory
@@ -288,57 +312,74 @@ router.get('/export',
       .populate('client', 'name nationalId phone village detailedAddress birthDate')
       .sort({ date: -1 });
 
+    // Transform data for export
+    const transformedRecords = records.map(record => {
+      // تحويل animalCounts إلى object بسيط
+      const animalCounts = record.animalCounts || {};
+      
+      // تحويل client إلى object بسيط
+      const client = record.client || {};
+      
+      // تحويل coordinates إلى object بسيط
+      const coordinates = record.coordinates || {};
+      
+      // تحويل request إلى object بسيط
+      const request = record.request || {};
+      
+      return {
+        'Serial No': record.serialNo || '',
+        'Date': record.date ? record.date.toISOString().split('T')[0] : '',
+        'Name': client.name || '',
+        'ID': client.nationalId || '',
+        'Birth Date': client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : '',
+        'Phone': client.phone || '',
+        'Location': record.farmLocation || '',
+        'N Coordinate': coordinates.latitude || '',
+        'E Coordinate': coordinates.longitude || '',
+        'Supervisor': record.supervisor || '',
+        'Vehicle No.': record.vehicleNo || '',
+        'Sheep': animalCounts.sheep || 0,
+        'Goats': animalCounts.goats || 0,
+        'Camel': animalCounts.camel || 0,
+        'Horse': animalCounts.horse || 0,
+        'Cattle': animalCounts.cattle || 0,
+        'Diagnosis': record.diagnosis || '',
+        'Intervention Category': record.interventionCategory || '',
+        'Treatment': record.treatment || '',
+        'Request Date': request.date ? new Date(request.date).toISOString().split('T')[0] : '',
+        'Request Status': request.situation || '',
+        'Request Fulfilling Date': request.fulfillingDate ? new Date(request.fulfillingDate).toISOString().split('T')[0] : '',
+        'Category': record.category || '',
+        'Remarks': record.remarks || ''
+      };
+    });
+
     if (format === 'csv') {
       const { Parser } = require('json2csv');
-      
-      // Transform data for the new column structure
-      const transformedRecords = records.map(record => {
-        // تحويل animalCounts إلى object بسيط
-        const animalCounts = record.animalCounts || {};
-        
-        // تحويل client إلى object بسيط
-        const client = record.client || {};
-        
-        // تحويل coordinates إلى object بسيط
-        const coordinates = record.coordinates || {};
-        
-        // تحويل request إلى object بسيط
-        const request = record.request || {};
-        
-        return {
-          'Serial No': record.serialNo || '',
-          'Date': record.date ? record.date.toISOString().split('T')[0] : '',
-          'Name': client.name || '',
-          'ID': client.nationalId || '',
-          'Birth Date': client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : '',
-          'Phone': client.phone || '',
-          'Location': record.farmLocation || '',
-          'N Coordinate': coordinates.latitude || '',
-          'E Coordinate': coordinates.longitude || '',
-          'Supervisor': record.supervisor || '',
-          'Vehicle No.': record.vehicleNo || '',
-          'Sheep': animalCounts.sheep || 0,
-          'Goats': animalCounts.goats || 0,
-          'Camel': animalCounts.camel || 0,
-          'Horse': animalCounts.horse || 0,
-          'Cattle': animalCounts.cattle || 0,
-          'Diagnosis': record.diagnosis || '',
-          'Intervention Category': record.interventionCategory || '',
-          'Treatment': record.treatment || '',
-          'Request Date': request.date ? new Date(request.date).toISOString().split('T')[0] : '',
-          'Request Status': request.situation || '',
-          'Request Fulfilling Date': request.fulfillingDate ? new Date(request.fulfillingDate).toISOString().split('T')[0] : '',
-          'Category': record.category || '',
-          'Remarks': record.remarks || ''
-        };
-      });
-      
       const parser = new Parser();
       const csv = parser.parse(transformedRecords);
       
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=mobile-clinics.csv');
       res.send(csv);
+    } else if (format === 'excel') {
+      const XLSX = require('xlsx');
+      
+      // Create a new workbook
+      const workbook = XLSX.utils.book_new();
+      
+      // Convert data to worksheet
+      const worksheet = XLSX.utils.json_to_sheet(transformedRecords);
+      
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Mobile Clinics');
+      
+      // Generate Excel file buffer
+      const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=mobile-clinics.xlsx');
+      res.send(excelBuffer);
     } else {
       res.json({
         success: true,
@@ -691,10 +732,22 @@ router.post('/import',
     const upload = multer({ 
       storage,
       fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+        const allowedMimeTypes = [
+          'text/csv',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ];
+        const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+        
+        const hasValidMimeType = allowedMimeTypes.includes(file.mimetype);
+        const hasValidExtension = allowedExtensions.some(ext => 
+          file.originalname.toLowerCase().endsWith(ext)
+        );
+        
+        if (hasValidMimeType || hasValidExtension) {
           cb(null, true);
         } else {
-          cb(new Error('Only CSV files are allowed'));
+          cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'));
         }
       },
       limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
@@ -720,16 +773,12 @@ router.post('/import',
       let rowNumber = 0;
       
       try {
-        // Parse CSV file
-        await new Promise((resolve, reject) => {
-          fs.createReadStream(req.file.path)
-            .pipe(csv())
-            .on('data', (data) => {
-              rowNumber++;
-              results.push({ ...data, rowNumber });
-            })
-            .on('end', resolve)
-            .on('error', reject);
+        // Parse file (CSV or Excel)
+        const fileData = await parseFileData(req.file.path, req.file.originalname);
+        
+        // Add row numbers to results
+        fileData.forEach((data, index) => {
+          results.push({ ...data, rowNumber: index + 1 });
         });
         
         let successCount = 0;
