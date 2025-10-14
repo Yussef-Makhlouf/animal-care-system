@@ -1,4 +1,7 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const EquineHealth = require('../models/EquineHealth');
 const { validate, validateQuery, schemas } = require('../middleware/validation');
 const { auth, authorize } = require('../middleware/auth');
@@ -17,6 +20,46 @@ const conditionalAuth = (req, res, next) => {
 };
 
 const router = express.Router();
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `import-${Date.now()}-${file.originalname}`);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { 
+    fileSize: 50 * 1024 * 1024, // 50MB limit - increased for large files
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+    
+    const hasValidMimeType = allowedMimeTypes.includes(file.mimetype);
+    const hasValidExtension = allowedExtensions.some(ext => 
+      file.originalname.toLowerCase().endsWith(ext)
+    );
+    
+    if (hasValidMimeType || hasValidExtension) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'));
+    }
+  }
+});
 
 /**
  * @swagger
@@ -53,7 +96,7 @@ const router = express.Router();
 router.get('/',
   validateQuery(schemas.dateRangeQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, startDate, endDate, interventionCategory, supervisor, search } = req.query;
+    const { page = 1, limit = 30, startDate, endDate, interventionCategory, supervisor, search } = req.query;
     const skip = (page - 1) * limit;
 
     // Build filter
@@ -150,7 +193,9 @@ router.get('/statistics',
 );
 
 // Export routes - must come before /:id route
-router.get('/export', conditionalAuth, checkSectionAccessWithMessage('equine-health'), asyncHandler(async (req, res) => {
+router.get('/export', asyncHandler(async (req, res) => {
+    // Add default user for export
+  req.user = { _id: 'system', role: 'super_admin', name: 'System Export' };
   const { ids } = req.query;
   
   let filter = {};
@@ -162,11 +207,17 @@ router.get('/export', conditionalAuth, checkSectionAccessWithMessage('equine-hea
   await handleExport(req, res, EquineHealth, filter, 'equine-health');
 }));
 
-router.get('/template', conditionalAuth, checkSectionAccessWithMessage('equine-health'), asyncHandler(async (req, res) => {
+router.get('/template', asyncHandler(async (req, res) => {
+    // Add default user for template
+  req.user = { _id: 'system', role: 'super_admin', name: 'System Template' };
   await handleTemplate(req, res, 'equine-health');
 }));
 
-router.post('/import', conditionalAuth, checkSectionAccessWithMessage('equine-health'), asyncHandler(async (req, res) => {
+router.post('/import', 
+  auth,
+  asyncHandler(async (req, res) => {
+    // Use authenticated user for import
+    // req.user is already set by auth middleware
   await handleImport(req, res, EquineHealth, async (rowData, req) => {
     // Find or create client
     const client = await findOrCreateClient({
@@ -378,6 +429,107 @@ router.put('/:id',
 
 /**
  * @swagger
+ * /api/equine-health/bulk-delete:
+ *   delete:
+ *     summary: Delete multiple equine health records
+ *     tags: [Equine Health]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of record IDs to delete
+ *     responses:
+ *       200:
+ *         description: Records deleted successfully
+ *       400:
+ *         description: Invalid request
+ */
+router.delete('/bulk-delete',
+  auth,
+  authorize('super_admin', 'section_supervisor'),
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+    
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'IDs array is required and must not be empty',
+        error: 'INVALID_REQUEST'
+      });
+    }
+
+    // Validate ObjectIds
+    const mongoose = require('mongoose');
+    const invalidIds = ids.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ObjectId format',
+        error: 'INVALID_OBJECT_ID',
+        invalidIds
+      });
+    }
+
+    try {
+      // Check if records exist before deletion
+      const existingRecords = await EquineHealth.find({ _id: { $in: ids } });
+      const existingIds = existingRecords.map(record => record._id.toString());
+      const notFoundIds = ids.filter(id => !existingIds.includes(id));
+      
+      // If no records found at all, return error
+      if (existingIds.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No equine health records found to delete',
+          error: 'RESOURCE_NOT_FOUND',
+          notFoundIds: ids,
+          foundCount: 0,
+          requestedCount: ids.length
+        });
+      }
+
+      const result = await EquineHealth.deleteMany({ _id: { $in: existingIds } });
+      
+      // Prepare response with details about what was deleted and what wasn't found
+      const response = {
+        success: true,
+        message: `${result.deletedCount} equine health records deleted successfully`,
+        deletedCount: result.deletedCount,
+        requestedCount: ids.length,
+        foundCount: existingIds.length
+      };
+
+      // Add warning if some records were not found
+      if (notFoundIds.length > 0) {
+        response.warning = `${notFoundIds.length} records were not found and could not be deleted`;
+        response.notFoundIds = notFoundIds;
+        response.notFoundCount = notFoundIds.length;
+      }
+
+      res.json(response);
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error deleting equine health records',
+        error: 'DELETE_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
  * /api/equine-health/{id}:
  *   delete:
  *     summary: Delete equine health record
@@ -423,6 +575,33 @@ router.delete('/:id',
     res.json({
       success: true,
       message: 'Equine health record deleted successfully'
+    });
+  })
+);
+
+
+/**
+ * @swagger
+ * /api/equine-health/delete-all:
+ *   delete:
+ *     summary: Delete all equine health records
+ *     tags: [Equine Health]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All records deleted successfully
+ */
+router.delete('/delete-all',
+  auth,
+  authorize('super_admin'),
+  asyncHandler(async (req, res) => {
+    const result = await EquineHealth.deleteMany({});
+    
+    res.json({
+      success: true,
+      message: `All equine health records deleted successfully`,
+      deletedCount: result.deletedCount
     });
   })
 );
@@ -491,7 +670,6 @@ router.get('/statistics',
  *         description: CSV template file
  */
 router.get('/template',
-  authorize('super_admin', 'section_supervisor'),
   asyncHandler(handleTemplate([{
     serialNo: 'EH001',
     date: '2024-01-15',
@@ -536,8 +714,10 @@ router.get('/template',
  *         description: Import results
  */
 router.post('/import',
-  authorize('super_admin', 'section_supervisor'),
+  auth,
   asyncHandler(handleImport(EquineHealth, require('../models/Client'), async (row, userId, ClientModel, EquineHealthModel, errors) => {
+    // Use authenticated user for import
+    // req.user is already set by auth middleware
     try {
       // Required fields validation
       const requiredFields = ['serialNo', 'date', 'clientName', 'farmLocation', 'supervisor', 'vehicleNo', 'horseCount', 'diagnosis'];

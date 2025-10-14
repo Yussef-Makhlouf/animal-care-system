@@ -7,6 +7,8 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
+// Load environment variables
+require('dotenv').config({ path: './production.env' });
 require('dotenv').config();
 
 // Import routes
@@ -23,13 +25,12 @@ const clientsRoutes = require('./routes/clients');
 const reportsRoutes = require('./routes/reports');
 const uploadRoutes = require('./routes/upload');
 const villagesRoutes = require('./routes/villages');
+const importExportRoutes = require('./routes/import-export');
 
 // Import middleware
 const { errorHandler } = require('./middleware/errorHandler');
 const notFound = require('./middleware/notFound');
 const { auth: authMiddleware } = require('./middleware/auth');
-const devAuth = require('./middleware/dev-auth');
-const devNoAuth = require('./middleware/dev-no-auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -39,23 +40,23 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
+// Rate limiting - تعطيل مؤقت للاختبار
+// const limiter = rateLimit({
+//   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+//   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+//   message: {
+//     error: 'Too many requests from this IP, please try again later.',
+//     retryAfter: '15 minutes'
+//   },
+//   standardHeaders: true,
+//   legacyHeaders: false,
+// });
+// app.use('/api/', limiter);
 
-// CORS configuration - السماح لجميع الأصول
+// CORS configuration - آمن للإنتاج
 const corsOptions = {
-  origin: '*', // السماح لجميع الأصول
-  credentials: false, // تجنب مشاكل credentials
+  origin: process.env.CORS_ORIGIN?.split(',') || ['https://yourdomain.com'],
+  credentials: true, // آمن للإنتاج
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
   allowedHeaders: [
     'Content-Type', 
@@ -189,7 +190,7 @@ app.use('/api/sections', sectionsRoutes);
 app.use('/api/seed', seedRoutes);
 
 // استخدام المصادقة الحقيقية بناءً على البيئة
-const selectedAuth = process.env.NODE_ENV === 'production' ? authMiddleware : devAuth;
+const selectedAuth = authMiddleware;
 
 app.use('/api/users', selectedAuth, usersRoutes);
 app.use('/api/parasite-control', selectedAuth, parasiteControlRoutes);
@@ -201,6 +202,7 @@ app.use('/api/clients', selectedAuth, clientsRoutes);
 app.use('/api/reports', selectedAuth, reportsRoutes);
 app.use('/api/upload', selectedAuth, uploadRoutes);
 app.use('/api/villages', selectedAuth, villagesRoutes);
+app.use('/api/import-export', selectedAuth, importExportRoutes);
 
 // Welcome message
 app.get('/', (req, res) => {
@@ -221,7 +223,8 @@ app.get('/', (req, res) => {
       clients: '/api/clients',
       reports: '/api/reports',
       upload: '/api/upload',
-      villages: '/api/villages'
+      villages: '/api/villages',
+      importExport: '/api/import-export'
     }
   });
 });

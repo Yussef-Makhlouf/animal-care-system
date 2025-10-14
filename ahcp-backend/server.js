@@ -7,18 +7,29 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
+// Load environment variables
+require('dotenv').config({ path: './production.env' });
 require('dotenv').config();
+
+// Check critical environment variables
+console.log('🔍 Environment check:');
+console.log('📊 NODE_ENV:', process.env.NODE_ENV);
+console.log('🔑 JWT_SECRET:', process.env.JWT_SECRET ? 'Set' : 'Not set');
+console.log('🗄️ MONGODB_URI:', process.env.MONGODB_URI ? 'Set' : 'Not set');
+console.log('🌐 CORS_ORIGIN:', process.env.CORS_ORIGIN);
 
 // Import routes with error handling
 let authRoutes, usersRoutes, sectionsRoutes, seedRoutes;
 let parasiteControlRoutes, vaccinationRoutes, mobileClinicsRoutes;
 let equineHealthRoutes, laboratoriesRoutes, clientsRoutes;
-let reportsRoutes, uploadRoutes, villagesRoutes;
+let reportsRoutes, uploadRoutes, villagesRoutes, importExportRoutes;
 
-let errorHandler, notFound, authMiddleware, devAuth, devNoAuth;
+let errorHandler, notFound, authMiddleware;
 
 try {
+  console.log('🔄 Loading routes...');
   authRoutes = require('./src/routes/auth');
+  console.log('✅ Auth routes loaded');
   usersRoutes = require('./src/routes/users');
   sectionsRoutes = require('./src/routes/sections');
   seedRoutes = require('./src/routes/seed');
@@ -31,15 +42,16 @@ try {
   reportsRoutes = require('./src/routes/reports');
   uploadRoutes = require('./src/routes/upload');
   villagesRoutes = require('./src/routes/villages');
+  importExportRoutes = require('./src/routes/import-export');
 
   // Import middleware
   errorHandler = require('./src/middleware/errorHandler').errorHandler;
-  notFound = require('./src/middleware/errorHandler').notFound;
+  notFound = require('./src/middleware/notFound');
   authMiddleware = require('./src/middleware/auth').auth;
-  devAuth = require('./src/middleware/dev-auth');
-  devNoAuth = require('./src/middleware/dev-no-auth');
+  console.log('✅ All routes and middleware loaded successfully');
 } catch (error) {
-  console.error('Error loading routes or middleware:', error.message);
+  console.error('❌ Error loading routes or middleware:', error.message);
+  console.error('❌ Stack trace:', error.stack);
 }
 
 const app = express();
@@ -92,12 +104,8 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Production mode check
-if (process.env.NODE_ENV === 'production') {
-  console.log('🔒 Production Mode: Full authentication enabled');
-} else {
-  console.log('🔓 Development Mode: Simplified authentication enabled');
-}
+// Production mode
+console.log('🔒 Production Mode: Full authentication enabled');
 
 // Compression middleware
 app.use(compression());
@@ -198,24 +206,81 @@ app.get('/test', (req, res) => {
 });
 
 // API routes - only add if routes are loaded successfully
-if (authRoutes) app.use('/api/auth', authRoutes);
+if (authRoutes) {
+  console.log('✅ Adding auth routes to /api/auth');
+  app.use('/api/auth', authRoutes);
+} else {
+  console.error('❌ Auth routes not loaded - this will cause 500 errors');
+  // Add a fallback route for auth
+  app.use('/api/auth', (req, res) => {
+    res.status(500).json({
+      success: false,
+      message: 'Auth routes not loaded',
+      error: 'AUTH_ROUTES_NOT_LOADED'
+    });
+  });
+}
 if (sectionsRoutes) app.use('/api/sections', sectionsRoutes);
 if (seedRoutes) app.use('/api/seed', seedRoutes);
 
-// Use authentication based on environment
-const selectedAuth = process.env.NODE_ENV === 'production' ? authMiddleware : devAuth;
+// Use authentication for production
+const selectedAuth = authMiddleware;
 
-// Only add routes if they exist and auth middleware is available
+// Routes that need authentication
 if (usersRoutes && selectedAuth) app.use('/api/users', selectedAuth, usersRoutes);
-if (parasiteControlRoutes && selectedAuth) app.use('/api/parasite-control', selectedAuth, parasiteControlRoutes);
-if (vaccinationRoutes && selectedAuth) app.use('/api/vaccination', selectedAuth, vaccinationRoutes);
-if (mobileClinicsRoutes && selectedAuth) app.use('/api/mobile-clinics', selectedAuth, mobileClinicsRoutes);
-if (equineHealthRoutes && selectedAuth) app.use('/api/equine-health', selectedAuth, equineHealthRoutes);
-if (laboratoriesRoutes && selectedAuth) app.use('/api/laboratories', selectedAuth, laboratoriesRoutes);
-if (clientsRoutes && selectedAuth) app.use('/api/clients', selectedAuth, clientsRoutes);
-if (reportsRoutes && selectedAuth) app.use('/api/reports', selectedAuth, reportsRoutes);
-if (uploadRoutes && selectedAuth) app.use('/api/upload', selectedAuth, uploadRoutes);
+
+// Routes with mixed authentication (some endpoints protected, some not)
+if (parasiteControlRoutes) {
+  console.log('✅ Loading parasite-control routes with authentication');
+  app.use('/api/parasite-control', selectedAuth, parasiteControlRoutes);
+}
+if (vaccinationRoutes) {
+  console.log('✅ Loading vaccination routes with authentication');
+  app.use('/api/vaccination', selectedAuth, vaccinationRoutes);
+}
+if (mobileClinicsRoutes) {
+  console.log('✅ Loading mobile-clinics routes with authentication');
+  app.use('/api/mobile-clinics', selectedAuth, mobileClinicsRoutes);
+}
+if (equineHealthRoutes) {
+  console.log('✅ Loading equine-health routes with authentication');
+  app.use('/api/equine-health', selectedAuth, equineHealthRoutes);
+}
+if (laboratoriesRoutes) {
+  console.log('✅ Loading laboratories routes with authentication');
+  app.use('/api/laboratories', selectedAuth, laboratoriesRoutes);
+}
+if (clientsRoutes) {
+  console.log('✅ Loading clients routes with authentication');
+  app.use('/api/clients', selectedAuth, clientsRoutes);
+}
+if (reportsRoutes) {
+  console.log('✅ Loading reports routes with authentication');
+  app.use('/api/reports', selectedAuth, reportsRoutes);
+}
+if (uploadRoutes) {
+  console.log('✅ Loading upload routes with authentication');
+  app.use('/api/upload', selectedAuth, uploadRoutes);
+}
 if (villagesRoutes && selectedAuth) app.use('/api/villages', selectedAuth, villagesRoutes);
+
+// Import/Export routes
+if (importExportRoutes) {
+  console.log('✅ Loading import-export routes with authentication');
+  app.use('/api/import-export', selectedAuth, importExportRoutes);
+}
+
+
+// Test endpoint for debugging
+app.get('/test-routes', (req, res) => {
+  res.json({
+    message: 'Routes test',
+    mobileClinicsRoutes: !!mobileClinicsRoutes,
+    clientsRoutes: !!clientsRoutes,
+    vaccinationRoutes: !!vaccinationRoutes,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Welcome message
 app.get('/', (req, res) => {
@@ -251,8 +316,19 @@ app.get('/', (req, res) => {
 });
 
 // Error handling middleware - only add if they exist
-if (notFound) app.use(notFound);
-if (errorHandler) app.use(errorHandler);
+if (notFound) {
+  console.log('✅ Adding notFound middleware');
+  app.use(notFound);
+} else {
+  console.error('❌ notFound middleware not loaded');
+}
+
+if (errorHandler) {
+  console.log('✅ Adding errorHandler middleware');
+  app.use(errorHandler);
+} else {
+  console.error('❌ errorHandler middleware not loaded');
+}
 
 // Database connection with better error handling
 const connectDB = async () => {
@@ -310,6 +386,17 @@ if (!process.env.VERCEL) {
     console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
     console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
   });
+} else {
+  console.log('🌐 Running on Vercel environment');
 }
+
+// Add global error handler for unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
 
 module.exports = app;

@@ -134,6 +134,10 @@ const errorHandler = (err, req, res, next) => {
   if (process.env.NODE_ENV === 'development') {
     response.stack = err.stack;
     response.details = error;
+  } else {
+    // في الإنتاج، إخفاء التفاصيل الحساسة
+    delete response.stack;
+    delete response.details;
   }
 
   // Add field-specific errors if available
@@ -185,21 +189,8 @@ const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-/**
- * 404 handler for undefined routes
- */
-const notFound = (req, res, next) => {
-  const error = new AppError(
-    `Route ${req.originalUrl} not found`,
-    404,
-    'ROUTE_NOT_FOUND'
-  );
-  next(error);
-};
-
 module.exports = {
   errorHandler,
   AppError,
-  asyncHandler,
-  notFound
+  asyncHandler
 };

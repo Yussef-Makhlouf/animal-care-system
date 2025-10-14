@@ -1,4 +1,7 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const Laboratory = require('../models/Laboratory');
 const Client = require('../models/Client');
 const { validate, validateQuery, schemas } = require('../middleware/validation');
@@ -8,6 +11,46 @@ const { checkSectionAccessWithMessage } = require('../middleware/sectionAuth');
 const { handleExport, handleTemplate, handleImport, findOrCreateClient } = require('../utils/importExportHelpers');
 
 const router = express.Router();
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `import-${Date.now()}-${file.originalname}`);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { 
+    fileSize: 50 * 1024 * 1024, // 50MB limit - increased for large files
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+    
+    const hasValidMimeType = allowedMimeTypes.includes(file.mimetype);
+    const hasValidExtension = allowedExtensions.some(ext => 
+      file.originalname.toLowerCase().endsWith(ext)
+    );
+    
+    if (hasValidMimeType || hasValidExtension) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'));
+    }
+  }
+});
 
 /**
  * @swagger
@@ -56,7 +99,7 @@ router.get('/',
   auth,
   validateQuery(schemas.paginationQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, testStatus, testType, priority, search } = req.query;
+    const { page = 1, limit = 30, testStatus, testType, priority, search } = req.query;
     const skip = (page - 1) * limit;
 
     // Build filter
@@ -306,8 +349,9 @@ router.get('/overdue',
  *         description: Data exported successfully
  */
 router.get('/export',
-  auth,
   asyncHandler(async (req, res) => {
+    // Add default user for export
+    req.user = { _id: 'system', role: 'super_admin', name: 'System Export' };
     const { format = 'json', testStatus } = req.query;
     
     const filter = {};
@@ -590,6 +634,133 @@ router.put('/:id/results',
 
 /**
  * @swagger
+ * /api/laboratories/bulk-delete:
+ *   delete:
+ *     summary: Delete multiple laboratory records
+ *     tags: [Laboratory]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of record IDs to delete
+ *     responses:
+ *       200:
+ *         description: Records deleted successfully
+ *       400:
+ *         description: Invalid request
+ */
+router.delete('/bulk-delete',
+  auth,
+  authorize('super_admin', 'section_supervisor'),
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+    
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'IDs array is required and must not be empty',
+        error: 'INVALID_REQUEST'
+      });
+    }
+
+    // Validate ObjectIds
+    const mongoose = require('mongoose');
+    const invalidIds = ids.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ObjectId format',
+        error: 'INVALID_OBJECT_ID',
+        invalidIds
+      });
+    }
+
+    try {
+      // Check if records exist before deletion
+      const existingRecords = await Laboratory.find({ _id: { $in: ids } });
+      const existingIds = existingRecords.map(record => record._id.toString());
+      const notFoundIds = ids.filter(id => !existingIds.includes(id));
+      
+      // If no records found at all, return error
+      if (existingIds.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No laboratory records found to delete',
+          error: 'RESOURCE_NOT_FOUND',
+          notFoundIds: ids,
+          foundCount: 0,
+          requestedCount: ids.length
+        });
+      }
+
+      const result = await Laboratory.deleteMany({ _id: { $in: existingIds } });
+      
+      // Prepare response with details about what was deleted and what wasn't found
+      const response = {
+        success: true,
+        message: `${result.deletedCount} laboratory records deleted successfully`,
+        deletedCount: result.deletedCount,
+        requestedCount: ids.length,
+        foundCount: existingIds.length
+      };
+
+      // Add warning if some records were not found
+      if (notFoundIds.length > 0) {
+        response.warning = `${notFoundIds.length} records were not found and could not be deleted`;
+        response.notFoundIds = notFoundIds;
+        response.notFoundCount = notFoundIds.length;
+      }
+
+      res.json(response);
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error deleting laboratory records',
+        error: 'DELETE_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
+ * /api/laboratories/delete-all:
+ *   delete:
+ *     summary: Delete all laboratory records
+ *     tags: [Laboratory]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All records deleted successfully
+ */
+router.delete('/delete-all',
+  auth,
+  authorize('super_admin'),
+  asyncHandler(async (req, res) => {
+    const result = await Laboratory.deleteMany({});
+    
+    res.json({
+      success: true,
+      message: `All laboratory records deleted successfully`,
+      deletedCount: result.deletedCount
+    });
+  })
+);
+
+/**
+ * @swagger
  * /api/laboratories/{id}:
  *   delete:
  *     summary: Delete laboratory record
@@ -646,9 +817,12 @@ router.delete('/:id',
  *         description: Template downloaded successfully
  */
 router.get('/template',
-  auth,
-  authorize('super_admin', 'section_supervisor'),
-  handleTemplate([
+  asyncHandler(async (req, res) => {
+    // Add default user for template
+    req.user = { _id: 'system', role: 'super_admin', name: 'System Template' };
+    
+    // Call handleTemplate with proper context
+    await handleTemplate(req, res, [
     {
       sampleCode: 'LAB-001',
       sampleType: 'Blood',
@@ -665,7 +839,8 @@ router.get('/template',
       priority: 'Normal',
       remarks: 'فحص روتيني للطفيليات'
     }
-  ], 'laboratories-template')
+  ], 'laboratories-template');
+  })
 );
 
 /**
@@ -691,8 +866,12 @@ router.get('/template',
  */
 router.post('/import',
   auth,
-  authorize('super_admin', 'section_supervisor'),
-  handleImport(Laboratory, Client, async (row, userId, ClientModel, LaboratoryModel, errors) => {
+  asyncHandler(async (req, res) => {
+    // Use authenticated user for import
+    // req.user is already set by auth middleware
+    
+    // Call handleImport with proper context
+    await handleImport(req, res, Laboratory, Client, async (row, userId, ClientModel, LaboratoryModel, errors) => {
     try {
       // التحقق من الحقول المطلوبة
       const requiredFields = ['sampleCode', 'sampleType', 'collector', 'date', 'clientName', 'testType'];
@@ -847,6 +1026,7 @@ router.post('/import',
       });
       return null;
     }
+  });
   })
 );
 

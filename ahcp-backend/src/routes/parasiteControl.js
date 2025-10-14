@@ -1,12 +1,55 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const ParasiteControl = require('../models/ParasiteControl');
 const Client = require('../models/Client');
 const { validate, validateQuery, schemas } = require('../middleware/validation');
 const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
-const { handleTemplate, handleImport, findOrCreateClient } = require('../utils/importExportHelpers');
+// Import/Export functionality moved to import-export routes
 
 const router = express.Router();
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `import-${Date.now()}-${file.originalname}`);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { 
+    fileSize: 50 * 1024 * 1024, // 50MB limit - increased for large files
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+    
+    const hasValidMimeType = allowedMimeTypes.includes(file.mimetype);
+    const hasValidExtension = allowedExtensions.some(ext => 
+      file.originalname.toLowerCase().endsWith(ext)
+    );
+    
+    if (hasValidMimeType || hasValidExtension) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'));
+    }
+  }
+});
 
 /**
  * @swagger
@@ -55,7 +98,7 @@ router.get('/',
   auth,
   validateQuery(schemas.dateRangeQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, startDate, endDate, supervisor, search } = req.query;
+    const { page = 1, limit = 30, startDate, endDate, supervisor, search } = req.query;
     const skip = (page - 1) * limit;
 
     // Build filter
@@ -210,8 +253,9 @@ router.get('/statistics',
  *         description: Data exported successfully
  */
 router.get('/export',
-  auth,
   asyncHandler(async (req, res) => {
+    // Add default user for export
+    req.user = { _id: 'system', role: 'super_admin', name: 'System Export' };
     const { format = 'json', startDate, endDate } = req.query;
     
     const filter = {};
@@ -616,6 +660,133 @@ router.put('/:id',
 
 /**
  * @swagger
+ * /api/parasite-control/bulk-delete:
+ *   delete:
+ *     summary: Delete multiple parasite control records
+ *     tags: [Parasite Control]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of record IDs to delete
+ *     responses:
+ *       200:
+ *         description: Records deleted successfully
+ *       400:
+ *         description: Invalid request
+ */
+router.delete('/bulk-delete',
+  auth,
+  authorize('super_admin', 'section_supervisor'),
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+    
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'IDs array is required and must not be empty',
+        error: 'INVALID_REQUEST'
+      });
+    }
+
+    // Validate ObjectIds
+    const mongoose = require('mongoose');
+    const invalidIds = ids.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ObjectId format',
+        error: 'INVALID_OBJECT_ID',
+        invalidIds
+      });
+    }
+
+    try {
+      // Check if records exist before deletion
+      const existingRecords = await ParasiteControl.find({ _id: { $in: ids } });
+      const existingIds = existingRecords.map(record => record._id.toString());
+      const notFoundIds = ids.filter(id => !existingIds.includes(id));
+      
+      // If no records found at all, return error
+      if (existingIds.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No parasite control records found to delete',
+          error: 'RESOURCE_NOT_FOUND',
+          notFoundIds: ids,
+          foundCount: 0,
+          requestedCount: ids.length
+        });
+      }
+
+      const result = await ParasiteControl.deleteMany({ _id: { $in: existingIds } });
+      
+      // Prepare response with details about what was deleted and what wasn't found
+      const response = {
+        success: true,
+        message: `${result.deletedCount} parasite control records deleted successfully`,
+        deletedCount: result.deletedCount,
+        requestedCount: ids.length,
+        foundCount: existingIds.length
+      };
+
+      // Add warning if some records were not found
+      if (notFoundIds.length > 0) {
+        response.warning = `${notFoundIds.length} records were not found and could not be deleted`;
+        response.notFoundIds = notFoundIds;
+        response.notFoundCount = notFoundIds.length;
+      }
+
+      res.json(response);
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error deleting parasite control records',
+        error: 'DELETE_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
+ * /api/parasite-control/delete-all:
+ *   delete:
+ *     summary: Delete all parasite control records
+ *     tags: [Parasite Control]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All records deleted successfully
+ */
+router.delete('/delete-all',
+  auth,
+  authorize('super_admin'),
+  asyncHandler(async (req, res) => {
+    const result = await ParasiteControl.deleteMany({});
+    
+    res.json({
+      success: true,
+      message: `All parasite control records deleted successfully`,
+      deletedCount: result.deletedCount
+    });
+  })
+);
+
+/**
+ * @swagger
  * /api/parasite-control/{id}:
  *   delete:
  *     summary: Delete parasite control record
@@ -697,8 +868,12 @@ router.delete('/:id',
  *         description: Template downloaded successfully
  */
 router.get('/template',
-  auth,
-  handleTemplate([
+  asyncHandler(async (req, res) => {
+    // Add default user for template
+    req.user = { _id: 'system', role: 'super_admin', name: 'System Template' };
+    
+    // Call handleTemplate with proper context
+    await handleTemplate([
     {
       'Serial No': `PC${Date.now().toString().slice(-6)}`, // Generate unique serial number
       'Date': '2024-01-15',
@@ -745,7 +920,8 @@ router.get('/template',
       'Request Fulfilling Date': '2024-01-16',
       'Remarks': 'ملاحظات إضافية'
     }
-  ], 'parasite-control-template')
+  ], 'parasite-control-template');
+  })
 );
 
 /**
@@ -772,10 +948,18 @@ router.get('/template',
  */
 router.post('/import',
   auth,
-  authorize('super_admin', 'section_supervisor'),
-  handleImport(ParasiteControl, Client, async (row, user, ClientModel, ParasiteControlModel, errors) => {
-    // Validate required fields - using new column names
-    if (!row['Serial No'] || !row['Date'] || !row['Name']) {
+  asyncHandler(async (req, res) => {
+    // Use authenticated user for import
+    // req.user is already set by auth middleware
+    
+    // Call handleImport with proper context
+    await handleImport(req, res, ParasiteControl, Client, async (row, user, ClientModel, ParasiteControlModel, errors) => {
+    // Validate required fields - using flexible field names
+    const serialNo = row['Serial No'] || row.serialNo || row['Serial'] || row.serial;
+    const date = row['Date'] || row.date || row.DATE;
+    const name = row['Name'] || row.name || row.clientName || row['Client Name'];
+    
+    if (!serialNo || !date || !name) {
       errors.push({
         row: row.rowNumber,
         field: 'required',
@@ -785,28 +969,28 @@ router.post('/import',
     }
     
     // Check if serial number already exists and generate unique one if needed
-    let serialNo = row['Serial No'];
-    const existingRecord = await ParasiteControlModel.findOne({ serialNo: serialNo });
+    let finalSerialNo = serialNo;
+    const existingRecord = await ParasiteControlModel.findOne({ serialNo: finalSerialNo });
     if (existingRecord) {
       // Generate a unique serial number by appending timestamp
       const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
-      serialNo = `${row['Serial No']}-${timestamp}`;
+      finalSerialNo = `${serialNo}-${timestamp}`;
       
       // Double check the new serial number doesn't exist
-      const duplicateCheck = await ParasiteControlModel.findOne({ serialNo: serialNo });
+      const duplicateCheck = await ParasiteControlModel.findOne({ serialNo: finalSerialNo });
       if (duplicateCheck) {
         // If still duplicate, add random number
-        serialNo = `${row['Serial No']}-${timestamp}-${Math.floor(Math.random() * 1000)}`;
+        finalSerialNo = `${serialNo}-${timestamp}-${Math.floor(Math.random() * 1000)}`;
       }
       
-      console.log(`⚠️  Serial number '${row['Serial No']}' already exists. Generated new serial: '${serialNo}'`);
+      console.log(`⚠️  Serial number '${serialNo}' already exists. Generated new serial: '${finalSerialNo}'`);
     }
     
     // Create client data object for findOrCreateClient function
     const clientData = {
-      clientName: row['Name'],
-      clientNationalId: row['ID'],
-      clientPhone: row['Phone'],
+      clientName: name,
+      clientNationalId: row['ID'] || row.id || row.ID,
+      clientPhone: row['Phone'] || row.phone || row.Phone,
       clientVillage: '', // Will be set from detailedAddress if needed
       clientDetailedAddress: ''
     };
@@ -913,6 +1097,7 @@ router.post('/import',
     // Populate client data for response
     await parasiteControl.populate('client', 'name nationalId phone village detailedAddress birthDate');
     return parasiteControl;
+  });
   })
 );
 

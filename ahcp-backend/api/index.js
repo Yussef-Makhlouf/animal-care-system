@@ -13,9 +13,9 @@ require('dotenv').config();
 let authRoutes, usersRoutes, sectionsRoutes, seedRoutes;
 let parasiteControlRoutes, vaccinationRoutes, mobileClinicsRoutes;
 let equineHealthRoutes, laboratoriesRoutes, clientsRoutes;
-let reportsRoutes, uploadRoutes, villagesRoutes;
+let reportsRoutes, uploadRoutes, villagesRoutes, exportRoutes, importRoutes;
 
-let errorHandler, notFound, authMiddleware, devAuth, devNoAuth;
+let errorHandler, notFound, authMiddleware;
 
 try {
   authRoutes = require('../src/routes/auth');
@@ -36,8 +36,6 @@ try {
   errorHandler = require('../src/middleware/errorHandler').errorHandler;
   notFound = require('../src/middleware/notFound');
   authMiddleware = require('../src/middleware/auth').auth;
-  devAuth = require('../src/middleware/dev-auth');
-  devNoAuth = require('../src/middleware/dev-no-auth');
 } catch (error) {
   console.error('Error loading routes or middleware:', error.message);
 }
@@ -186,20 +184,26 @@ if (authRoutes) app.use('/api/auth', authRoutes);
 if (sectionsRoutes) app.use('/api/sections', sectionsRoutes);
 if (seedRoutes) app.use('/api/seed', seedRoutes);
 
-// Use authentication based on environment
-const selectedAuth = process.env.NODE_ENV === 'production' ? authMiddleware : devAuth;
+// Use authentication for production
+const selectedAuth = authMiddleware;
 
-// Only add routes if they exist and auth middleware is available
+// Routes that need authentication
 if (usersRoutes && selectedAuth) app.use('/api/users', selectedAuth, usersRoutes);
-if (parasiteControlRoutes && selectedAuth) app.use('/api/parasite-control', selectedAuth, parasiteControlRoutes);
-if (vaccinationRoutes && selectedAuth) app.use('/api/vaccination', selectedAuth, vaccinationRoutes);
-if (mobileClinicsRoutes && selectedAuth) app.use('/api/mobile-clinics', selectedAuth, mobileClinicsRoutes);
-if (equineHealthRoutes && selectedAuth) app.use('/api/equine-health', selectedAuth, equineHealthRoutes);
-if (laboratoriesRoutes && selectedAuth) app.use('/api/laboratories', selectedAuth, laboratoriesRoutes);
-if (clientsRoutes && selectedAuth) app.use('/api/clients', selectedAuth, clientsRoutes);
-if (reportsRoutes && selectedAuth) app.use('/api/reports', selectedAuth, reportsRoutes);
-if (uploadRoutes && selectedAuth) app.use('/api/upload', selectedAuth, uploadRoutes);
+
+// Routes with mixed authentication (some endpoints protected, some not)
+if (parasiteControlRoutes) app.use('/api/parasite-control', parasiteControlRoutes);
+if (vaccinationRoutes) app.use('/api/vaccination', vaccinationRoutes);
+if (mobileClinicsRoutes) app.use('/api/mobile-clinics', mobileClinicsRoutes);
+if (equineHealthRoutes) app.use('/api/equine-health', equineHealthRoutes);
+if (laboratoriesRoutes) app.use('/api/laboratories', laboratoriesRoutes);
+if (clientsRoutes) app.use('/api/clients', clientsRoutes);
+if (reportsRoutes) app.use('/api/reports', reportsRoutes);
+if (uploadRoutes) app.use('/api/upload', uploadRoutes);
 if (villagesRoutes && selectedAuth) app.use('/api/villages', selectedAuth, villagesRoutes);
+
+// JWT-protected export/import routes
+if (exportRoutes) app.use('/api/export', exportRoutes);
+if (importRoutes) app.use('/api/import', importRoutes);
 
 // Simple test endpoint
 app.get('/test', (req, res) => {

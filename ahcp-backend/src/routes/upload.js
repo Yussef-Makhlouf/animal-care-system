@@ -299,6 +299,8 @@ router.post('/import/csv',
   auth,
   upload.single('csvFile'),
   asyncHandler(async (req, res) => {
+    // Use authenticated user for import
+    // req.user is already set by auth middleware
     if (!req.file) {
       return res.status(400).json({
         success: false,
