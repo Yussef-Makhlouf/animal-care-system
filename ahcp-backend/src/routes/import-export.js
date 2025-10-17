@@ -1011,6 +1011,7 @@ const handleDromoWebhook = (Model, processRowFunction) => {
         successRows: savedRecords.length,
         errorRows: errors.length,
         errors: errors,
+        
         batchId: `dromo_${Date.now()}_${Model.modelName.toLowerCase()}`,
         debug: {
           totalInDatabase: dbCount,
@@ -1727,21 +1728,21 @@ const processVaccinationRow = async (row, userId, errors) => {
       date: dates.mainDate,
       client: client._id,
       farmLocation: getFieldValue(row, [
-        'Location', 'location', 'Farm Location', 'farmLocation',
-        'الموقع', 'موقع المزرعة'
+        'farmLocation', 'Location', 'location', 'Farm Location',
+        'الموقع', 'موقع المزرعة', 'ابو خريط'
       ]) || 'N/A',
       supervisor: getFieldValue(row, [
-        'Supervisor', 'supervisor', 'المشرف'
+        'supervisor', 'Supervisor', 'المشرف'
       ]) || 'Default Supervisor',
       team: getFieldValue(row, [
-        'Team', 'team', 'الفريق'
+        'team', 'Team', 'الفريق'
       ]) || 'Default Team',
       vehicleNo: getFieldValue(row, [
-        'Vehicle No.', 'Vehicle No', 'vehicleNo', 'vehicle_no',
+        'vehicleNo', 'Vehicle No.', 'Vehicle No', 'vehicle_no',
         'رقم المركبة'
       ]) || 'N/A',
       vaccineType: getFieldValue(row, [
-        'Vaccine', 'vaccineType', 'vaccine_type', 'Vaccine Type',
+        'vaccineType', 'Vaccine', 'vaccine_type', 'Vaccine Type',
         'نوع اللقاح', 'اللقاح'
       ]) || 'Default Vaccine',
       vaccineCategory: processEnumValue(
