@@ -7,7 +7,7 @@ async function testAllAPIsFixed() {
     // Get authentication token first
     let token = null;
     try {
-        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
+        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -38,7 +38,7 @@ async function testAllAPIsFixed() {
 
     for (const endpoint of endpoints) {
         try {
-            const response = await axios.get(`http://localhost:3001/api${endpoint.url}?limit=5`, { 
+            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}?limit=5`, { 
                 headers,
                 timeout: 10000 
             });
@@ -81,7 +81,7 @@ async function testAllAPIsFixed() {
     
     for (const endpoint of statsEndpoints) {
         try {
-            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, { 
+            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, { 
                 headers,
                 timeout: 10000 
             });
@@ -110,7 +110,7 @@ async function testAllAPIsFixed() {
     // Test health endpoint
     console.log('\n🏥 Testing Health Endpoint...');
     try {
-        const healthResponse = await axios.get('http://localhost:3001/health');
+        const healthResponse = await axios.get('https://ahcp-backend-production.up.railway.app/health');
         if (healthResponse.status === 200) {
             console.log('✅ Health Check - OK');
             console.log(`   Environment: ${healthResponse.data.environment}`);

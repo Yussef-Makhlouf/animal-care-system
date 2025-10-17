@@ -20,12 +20,12 @@ timeout /t 3 /nobreak > nul
 echo.
 echo [4/4] Starting Frontend...
 cd ..\ahcp-dashboard
-start "AHCP Frontend Dev" cmd /k "set NEXT_PUBLIC_API_URL=http://localhost:3001/api && npm run dev"
+start "AHCP Frontend Dev" cmd /k "set NEXT_PUBLIC_API_URL=https://ahcp-backend-production.up.railway.app/api && npm run dev"
 
 echo.
 echo ✅ AHCP Development System Started!
 echo.
-echo Backend: http://localhost:3001
+echo Backend: https://ahcp-backend-production.up.railway.app
 echo Frontend: http://localhost:3000
 echo.
 echo Login credentials:

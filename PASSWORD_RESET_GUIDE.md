@@ -136,17 +136,17 @@ node test-password-reset.js
 #### API Testing
 ```bash
 # طلب إعادة تعيين
-curl -X POST http://localhost:3001/api/auth/forgot-password \
+curl -X POST https://ahcp-backend-production.up.railway.app/api/auth/forgot-password \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@ahcp.gov.sa"}'
 
 # التحقق من الرمز
-curl -X POST http://localhost:3001/api/auth/verify-reset-token \
+curl -X POST https://ahcp-backend-production.up.railway.app/api/auth/verify-reset-token \
   -H "Content-Type: application/json" \
   -d '{"token":"your-reset-token"}'
 
 # إعادة تعيين كلمة المرور
-curl -X POST http://localhost:3001/api/auth/reset-password \
+curl -X POST https://ahcp-backend-production.up.railway.app/api/auth/reset-password \
   -H "Content-Type: application/json" \
   -d '{"token":"your-reset-token","password":"NewPassword123"}'
 ```

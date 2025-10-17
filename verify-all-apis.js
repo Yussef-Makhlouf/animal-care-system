@@ -8,7 +8,7 @@
 const http = require('http');
 const https = require('https');
 
-const BASE_URL = process.env.API_URL || 'http://localhost:3001';
+const BASE_URL = process.env.API_URL || 'https://ahcp-backend-production.up.railway.app';
 
 // All API endpoints to test
 const API_ENDPOINTS = {

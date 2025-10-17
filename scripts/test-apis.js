@@ -1,7 +1,7 @@
 // اختبار سريع للـ APIs
 const axios = require('axios');
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = 'https://ahcp-backend-production.up.railway.app/api';
 
 async function testAPIs() {
   console.log('🚀 بدء اختبار APIs...\n');
@@ -9,7 +9,7 @@ async function testAPIs() {
   const tests = [
     {
       name: 'Health Check',
-      url: 'http://localhost:3001/health',
+      url: 'https://ahcp-backend-production.up.railway.app/health',
       method: 'GET'
     },
     {

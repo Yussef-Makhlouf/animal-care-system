@@ -136,7 +136,7 @@ echo ========================================
 echo   Deployment Complete!
 echo ========================================
 echo.
-echo Backend:  http://localhost:3001
+echo Backend:  https://ahcp-backend-production.up.railway.app
 echo Frontend: http://localhost:3000
 echo.
 echo Useful PM2 commands:

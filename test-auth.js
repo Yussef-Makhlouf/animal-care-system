@@ -4,7 +4,7 @@ async function testAuth() {
   try {
     console.log('🔐 Testing authentication...');
     
-    const response = await axios.post('http://localhost:3001/api/auth/login', {
+    const response = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
       email: 'admin@ahcp.gov.sa',
       password: 'admin123!'
     });

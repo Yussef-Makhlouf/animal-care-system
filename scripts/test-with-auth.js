@@ -9,7 +9,7 @@ async function testWithAuth() {
     // Step 1: Login to get token
     try {
         console.log('1️⃣ Getting authentication token...');
-        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
+        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -40,7 +40,7 @@ async function testWithAuth() {
     
     for (const endpoint of statsEndpoints) {
         try {
-            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, {
+            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -84,7 +84,7 @@ async function testWithAuth() {
     
     for (const endpoint of dataEndpoints) {
         try {
-            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, {
+            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'

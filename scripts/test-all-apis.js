@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // إعدادات الاختبار
-const BASE_URL = 'http://localhost:3001/api';
+const BASE_URL = 'https://ahcp-backend-production.up.railway.app/api';
 const TIMEOUT = 10000;
 
 // إنشاء instance من axios

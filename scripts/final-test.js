@@ -9,7 +9,7 @@ async function finalTest() {
     // Test 1: Backend Health
     try {
         console.log('\n1️⃣ Testing Backend Health...');
-        const health = await axios.get('http://localhost:3001/health');
+        const health = await axios.get('https://ahcp-backend-production.up.railway.app/health');
         console.log('✅ Backend is running');
         console.log(`   Environment: ${health.data.environment}`);
         console.log(`   Database: Connected`);
@@ -21,7 +21,7 @@ async function finalTest() {
     // Test 2: Login API
     try {
         console.log('\n2️⃣ Testing Login API...');
-        const login = await axios.post('http://localhost:3001/api/auth/login', {
+        const login = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -49,7 +49,7 @@ async function finalTest() {
     console.log('\n3️⃣ Testing Statistics APIs...');
     for (const endpoint of statsEndpoints) {
         try {
-            const response = await axios.get(`http://localhost:3001/api${endpoint}`);
+            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint}`);
             if (response.data.success || response.data.data) {
                 console.log(`✅ ${endpoint.split('/')[1]} stats - OK`);
             }
@@ -80,8 +80,8 @@ async function finalTest() {
         console.log('   Password: Admin@123456');
         console.log('\n🌐 Access URLs:');
         console.log('   Frontend: http://localhost:3000');
-        console.log('   Backend: http://localhost:3001');
-        console.log('   API Docs: http://localhost:3001/api-docs');
+        console.log('   Backend: https://ahcp-backend-production.up.railway.app');
+        console.log('   API Docs: https://ahcp-backend-production.up.railway.app/api-docs');
     } else {
         console.log('⚠️  Some tests failed. Check the errors above.');
     }

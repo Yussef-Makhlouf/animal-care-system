@@ -25,7 +25,7 @@ echo JWT_SECRET=ahcp_super_secret_key_2024_production_change_this_key >> .env.lo
 echo PORT=3001 >> .env.local
 cd ..\ahcp-dashboard
 echo NODE_ENV=production > .env.local
-echo NEXT_PUBLIC_API_URL=http://localhost:3001/api >> .env.local
+echo NEXT_PUBLIC_API_URL=https://ahcp-backend-production.up.railway.app/api >> .env.local
 echo ✅ تم إعداد متغيرات الإنتاج
 
 echo.
@@ -68,7 +68,7 @@ echo    ✅ ربط حقيقي بقاعدة البيانات
 echo.
 echo 🌐 الروابط:
 echo    - لوحة التحكم: http://localhost:3000
-echo    - API الخادم: http://localhost:3001
+echo    - API الخادم: https://ahcp-backend-production.up.railway.app
 echo    - تسجيل الدخول: http://localhost:3000/login
 echo.
 echo 📋 المميزات:

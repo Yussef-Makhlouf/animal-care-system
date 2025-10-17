@@ -63,7 +63,7 @@ const createTestScript = () => {
   const testScript = `const axios = require('axios');
 
 // Test configuration
-const BASE_URL = 'http://localhost:3001/api';
+const BASE_URL = 'https://ahcp-backend-production.up.railway.app/api';
 const TEST_CREDENTIALS = {
   email: 'admin@ahcp.gov.sa',
   password: 'admin123!'

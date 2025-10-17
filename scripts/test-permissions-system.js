@@ -35,7 +35,7 @@ async function testPermissionsSystem() {
         
         try {
             // Login
-            const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
+            const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
                 email: testUser.email,
                 password: testUser.password
             });
@@ -67,7 +67,7 @@ async function testPermissionsSystem() {
                 
                 // Test statistics access (should work for all)
                 try {
-                    const statsResponse = await axios.get('http://localhost:3001/api/clients/statistics', { headers });
+                    const statsResponse = await axios.get('https://ahcp-backend-production.up.railway.app/api/clients/statistics', { headers });
                     if (statsResponse.data.success) {
                         console.log(`✅ Can view statistics`);
                     }
@@ -77,7 +77,7 @@ async function testPermissionsSystem() {
                 
                 // Test data access (should work for all)
                 try {
-                    const dataResponse = await axios.get('http://localhost:3001/api/clients?limit=1', { headers });
+                    const dataResponse = await axios.get('https://ahcp-backend-production.up.railway.app/api/clients?limit=1', { headers });
                     if (dataResponse.data.success) {
                         console.log(`✅ Can view data`);
                     }

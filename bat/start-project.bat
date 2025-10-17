@@ -8,7 +8,7 @@ echo.
 echo [1/5] بدء تشغيل الخادم الخلفي (Backend)...
 cd ahcp-backend
 start "AHCP Backend" cmd /k "npm run dev"
-echo ✅ تم تشغيل الخادم الخلفي على http://localhost:3001
+echo ✅ تم تشغيل الخادم الخلفي على https://ahcp-backend-production.up.railway.app
 echo.
 
 echo [2/5] انتظار تحميل الخادم الخلفي...
@@ -35,9 +35,9 @@ echo ========================================
 echo ✅ تم تشغيل النظام بنجاح!
 echo.
 echo 🌐 لوحة التحكم: http://localhost:3000
-echo 🔧 API الخادم: http://localhost:3001
-echo 📚 توثيق API: http://localhost:3001/api-docs
-echo 🏥 فحص الصحة: http://localhost:3001/health
+echo 🔧 API الخادم: https://ahcp-backend-production.up.railway.app
+echo 📚 توثيق API: https://ahcp-backend-production.up.railway.app/api-docs
+echo 🏥 فحص الصحة: https://ahcp-backend-production.up.railway.app/health
 echo.
 echo 📋 معلومات المصادقة:
 echo    - تم تفعيل نظام المصادقة المبسط للتطوير
