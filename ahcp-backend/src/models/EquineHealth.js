@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { populate } = require('./Client');
 
 /**
  * @swagger
@@ -27,9 +28,6 @@ const mongoose = require('mongoose');
  *         client:
  *           type: string
  *           description: Client ID reference
- *         farmLocation:
- *           type: string
- *           description: Location of the farm
  *         coordinates:
  *           type: object
  *           properties:
@@ -93,7 +91,7 @@ const mongoose = require('mongoose');
  *               format: date
  *             situation:
  *               type: string
- *               enum: [Open, Closed, Pending]
+ *               enum: [Ongoing, Closed]
  *             fulfillingDate:
  *               type: string
  *               format: date
@@ -218,8 +216,8 @@ const requestSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Request situation is required'],
     enum: {
-      values: ['Open', 'Closed', 'Pending'],
-      message: 'Situation must be one of: Open, Closed, Pending'
+      values: ['Ongoing', 'Closed'],
+      message: 'Situation must be one of: Ongoing, Closed'
     }
   },
   fulfillingDate: {
@@ -227,17 +225,29 @@ const requestSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+// Function to generate random serial number
+const generateSerialNo = () => {
+  const timestamp = Date.now().toString();
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `EH${timestamp.slice(-6)}${random}`;
+};
+
 const equineHealthSchema = new mongoose.Schema({
   serialNo: {
     type: String,
     required: [true, 'Serial number is required'],
     unique: true,
     trim: true,
-    maxlength: [20, 'Serial number cannot exceed 20 characters']
+    maxlength: [20, 'Serial number cannot exceed 20 characters'],
+    default: generateSerialNo
   },
   date: {
     type: Date,
     required: [true, 'Date is required']
+  },
+  holdingCode: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HoldingCode'
   },
   client: {
     name: {
@@ -267,18 +277,6 @@ const equineHealthSchema = new mongoose.Schema({
       trim: true,
       maxlength: [100, 'Village name cannot exceed 100 characters']
     },
-    detailedAddress: {
-      type: String,
-      required: [true, 'Client detailed address is required'],
-      trim: true,
-      maxlength: [200, 'Address cannot exceed 200 characters']
-    }
-  },
-  farmLocation: {
-    type: String,
-    required: [true, 'Farm location is required'],
-    trim: true,
-    maxlength: [200, 'Location cannot exceed 200 characters']
   },
   coordinates: {
     latitude: {
@@ -320,8 +318,8 @@ const equineHealthSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Intervention category is required'],
     enum: {
-      values: ['Emergency', 'Routine', 'Preventive', 'Follow-up', 'Breeding', 'Performance'],
-      message: 'Intervention category must be one of: Emergency, Routine, Preventive, Follow-up, Breeding, Performance'
+      values: ['Clinical Examination', 'Ultrasonography', 'Lab Analysis', 'Surgical Operation', 'Farriery'],
+      message: 'Intervention category must be one of: Clinical Examination, Ultrasonography, Lab Analysis, Surgical Operation, Farriery'
     }
   },
   treatment: {

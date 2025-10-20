@@ -111,7 +111,6 @@ router.get('/',
       filter.$or = [
         { sampleCode: { $regex: search, $options: 'i' } },
         { collector: { $regex: search, $options: 'i' } },
-        { farmLocation: { $regex: search, $options: 'i' } },
         { laboratoryTechnician: { $regex: search, $options: 'i' } }
       ];
     }
@@ -120,6 +119,8 @@ router.get('/',
     let records;
     try {
       records = await Laboratory.find(filter)
+        .populate('client', 'name nationalId phone birthDate village detailedAddress')
+        .populate('holdingCode', 'code village description isActive')
         .skip(skip)
         .limit(parseInt(limit))
         .sort({ date: -1, priority: -1 })
@@ -369,7 +370,6 @@ router.get('/export',
         'date',
         'client.name',
         'client.nationalId',
-        'farmLocation',
         'testType',
         'totalSamples',
         'positiveCases',
@@ -420,6 +420,8 @@ router.get('/:id',
   auth,
   asyncHandler(async (req, res) => {
     const record = await Laboratory.findById(req.params.id)
+      .populate('client', 'name nationalId phone birthDate village detailedAddress')
+      .populate('holdingCode', 'code village description isActive')
       .populate('createdBy', 'name email role')
       .populate('updatedBy', 'name email role');
 
@@ -702,15 +704,54 @@ router.delete('/bulk-delete',
         });
       }
 
+      // Get client IDs from records before deletion for smart cleanup
+      const clientIds = existingRecords
+        .filter(record => record.client) // Only records with client references
+        .map(record => record.client);
+      
+      console.log(`🔍 Found ${clientIds.length} client references to check for cleanup`);
+      
       const result = await Laboratory.deleteMany({ _id: { $in: existingIds } });
+      
+      // Smart client cleanup - check if clients are still referenced elsewhere
+      let clientsDeleted = 0;
+      if (clientIds.length > 0) {
+        const Client = require('../models/Client');
+        
+        for (const clientId of clientIds) {
+          try {
+            // Check if client is referenced in other services
+            const [labCount, vaccinationCount, parasiteCount, mobileCount] = await Promise.all([
+              Laboratory.countDocuments({ client: clientId }),
+              require('../models/Vaccination').countDocuments({ client: clientId }),
+              require('../models/ParasiteControl').countDocuments({ client: clientId }),
+              require('../models/MobileClinic').countDocuments({ client: clientId })
+            ]);
+            
+            const totalReferences = labCount + vaccinationCount + parasiteCount + mobileCount;
+            
+            if (totalReferences === 0) {
+              // Client is not referenced anywhere, safe to delete
+              await Client.findByIdAndDelete(clientId);
+              clientsDeleted++;
+              console.log(`🗑️ Deleted orphaned client: ${clientId}`);
+            } else {
+              console.log(`✅ Client ${clientId} kept (${totalReferences} references remaining)`);
+            }
+          } catch (clientError) {
+            console.error(`❌ Error processing client ${clientId}:`, clientError);
+          }
+        }
+      }
       
       // Prepare response with details about what was deleted and what wasn't found
       const response = {
         success: true,
-        message: `${result.deletedCount} laboratory records deleted successfully`,
+        message: `${result.deletedCount} laboratory records deleted successfully${clientsDeleted > 0 ? ` and ${clientsDeleted} orphaned clients cleaned up` : ''}`,
         deletedCount: result.deletedCount,
         requestedCount: ids.length,
-        foundCount: existingIds.length
+        foundCount: existingIds.length,
+        clientsDeleted: clientsDeleted
       };
 
       // Add warning if some records were not found
@@ -735,6 +776,105 @@ router.delete('/bulk-delete',
 
 /**
  * @swagger
+ * /laboratories/{id}:
+ *   delete:
+ *     summary: Delete a laboratory record
+ *     tags: [Laboratories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Laboratory record ID
+ *     responses:
+ *       200:
+ *         description: Record deleted successfully
+ *       404:
+ *         description: Record not found
+ */
+router.delete('/:id',
+  auth,
+  authorize('super_admin', 'section_supervisor'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    
+    // Validate ObjectId
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ObjectId format',
+        error: 'INVALID_OBJECT_ID'
+      });
+    }
+
+    try {
+      // Find the record first to get client reference
+      const record = await Laboratory.findById(id);
+      
+      if (!record) {
+        return res.status(404).json({
+          success: false,
+          message: 'Laboratory record not found',
+          error: 'RESOURCE_NOT_FOUND'
+        });
+      }
+
+      const clientId = record.client;
+      
+      // Delete the laboratory record
+      await Laboratory.findByIdAndDelete(id);
+      
+      // Smart client cleanup if client reference exists
+      let clientDeleted = false;
+      if (clientId) {
+        const Client = require('../models/Client');
+        
+        try {
+          // Check if client is referenced in other services
+          const [labCount, vaccinationCount, parasiteCount, mobileCount] = await Promise.all([
+            Laboratory.countDocuments({ client: clientId }),
+            require('../models/Vaccination').countDocuments({ client: clientId }),
+            require('../models/ParasiteControl').countDocuments({ client: clientId }),
+            require('../models/MobileClinic').countDocuments({ client: clientId })
+          ]);
+          
+          const totalReferences = labCount + vaccinationCount + parasiteCount + mobileCount;
+          
+          if (totalReferences === 0) {
+            // Client is not referenced anywhere, safe to delete
+            await Client.findByIdAndDelete(clientId);
+            clientDeleted = true;
+            console.log(`🗑️ Deleted orphaned client: ${clientId}`);
+          } else {
+            console.log(`✅ Client ${clientId} kept (${totalReferences} references remaining)`);
+          }
+        } catch (clientError) {
+          console.error(`❌ Error processing client ${clientId}:`, clientError);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Laboratory record deleted successfully${clientDeleted ? ' and orphaned client cleaned up' : ''}`,
+        clientDeleted: clientDeleted
+      });
+    } catch (error) {
+      console.error('Delete error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  })
+);
+
+/**
+ * @swagger
  * /api/laboratories/delete-all:
  *   delete:
  *     summary: Delete all laboratory records
@@ -749,12 +889,33 @@ router.delete('/delete-all',
   auth,
   authorize('super_admin'),
   asyncHandler(async (req, res) => {
-    const result = await Laboratory.deleteMany({});
+    // Get all unique client IDs from laboratory records before deletion
+    const uniqueClientIds = await Laboratory.distinct('clientId');
+    console.log(`🔍 Found ${uniqueClientIds.length} unique client IDs in laboratory records`);
+    
+    // Delete all laboratory records
+    const labResult = await Laboratory.deleteMany({});
+    console.log(`🗑️ Deleted ${labResult.deletedCount} laboratory records`);
+    
+    // Delete associated clients (only those that were created from laboratory imports)
+    let clientsDeleted = 0;
+    if (uniqueClientIds.length > 0) {
+      const clientResult = await Client.deleteMany({ 
+        nationalId: { $in: uniqueClientIds.filter(id => id) } // Filter out null/undefined IDs
+      });
+      clientsDeleted = clientResult.deletedCount;
+      console.log(`🗑️ Deleted ${clientsDeleted} associated client records`);
+    }
     
     res.json({
       success: true,
-      message: `All laboratory records deleted successfully`,
-      deletedCount: result.deletedCount
+      message: `All laboratory records and associated clients deleted successfully`,
+      deletedCount: labResult.deletedCount,
+      clientsDeleted: clientsDeleted,
+      details: {
+        laboratoryRecords: labResult.deletedCount,
+        clientRecords: clientsDeleted
+      }
     });
   })
 );
@@ -831,7 +992,6 @@ router.get('/template',
       clientName: 'محمد أحمد الشمري',
       clientNationalId: '1234567890',
       clientPhone: '+966501234567',
-      farmLocation: 'مزرعة الشمري',
       testType: 'Parasitology',
       positiveCases: 2,
       negativeCases: 8,

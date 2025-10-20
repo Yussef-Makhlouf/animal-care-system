@@ -7,7 +7,7 @@ async function fixAPIResponseStructure() {
     // Get authentication token first
     let token = null;
     try {
-        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -36,7 +36,7 @@ async function fixAPIResponseStructure() {
     
     for (const endpoint of endpoints) {
         try {
-            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, { 
+            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, { 
                 headers,
                 timeout: 10000 
             });

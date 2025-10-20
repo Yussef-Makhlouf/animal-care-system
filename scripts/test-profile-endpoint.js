@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const API_BASE_URL = 'https://ahcp-backend-production.up.railway.app/api';
+const API_BASE_URL = 'http://localhost:3001/api';
 
 async function testProfileEndpoint() {
     try {

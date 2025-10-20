@@ -7,7 +7,7 @@ async function testDashboardStats() {
     // Get authentication token first
     let token = null;
     try {
-        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -38,7 +38,7 @@ async function testDashboardStats() {
     
     for (const endpoint of statsEndpoints) {
         try {
-            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, { headers });
+            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, { headers });
             
             if (response.data.success || response.data.data) {
                 console.log(`✅ ${endpoint.name} Statistics - OK`);

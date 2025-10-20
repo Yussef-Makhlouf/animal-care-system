@@ -97,7 +97,7 @@ if not exist "ahcp-backend\.env" (
 if not exist "ahcp-dashboard\.env.local" (
     echo %YELLOW%📝 إنشاء ملف .env.local للواجهة الأمامية...%NC%
     echo NODE_ENV=development > "ahcp-dashboard\.env.local"
-    echo NEXT_PUBLIC_API_URL=https://ahcp-backend-production.up.railway.app/api >> "ahcp-dashboard\.env.local"
+    echo NEXT_PUBLIC_API_URL=http://localhost:3001/api >> "ahcp-dashboard\.env.local"
     echo NEXT_PUBLIC_APP_URL=http://localhost:3000 >> "ahcp-dashboard\.env.local"
     echo NEXT_PUBLIC_DEV_MODE=true >> "ahcp-dashboard\.env.local"
 )
@@ -131,9 +131,9 @@ echo.
 echo %BLUE%🌐 الروابط المهمة:%NC%
 echo.
 echo %YELLOW%📊 لوحة التحكم:%NC%        http://localhost:3000
-echo %YELLOW%🔧 API الخادم:%NC%         https://ahcp-backend-production.up.railway.app
-echo %YELLOW%📚 توثيق API:%NC%         https://ahcp-backend-production.up.railway.app/api-docs
-echo %YELLOW%💚 فحص الصحة:%NC%         https://ahcp-backend-production.up.railway.app/health
+echo %YELLOW%🔧 API الخادم:%NC%         http://localhost:3001
+echo %YELLOW%📚 توثيق API:%NC%         http://localhost:3001/api-docs
+echo %YELLOW%💚 فحص الصحة:%NC%         http://localhost:3001/health
 echo.
 echo %BLUE%👤 بيانات تسجيل الدخول:%NC%
 echo %YELLOW%📧 البريد الإلكتروني:%NC%  admin@ahcp.gov.sa

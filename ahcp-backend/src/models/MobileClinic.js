@@ -9,6 +9,10 @@ const mongoose = require('mongoose');
  *       required:
  *         - serialNo
  *         - date
+ *         - client
+ *         - supervisor
+ *         - vehicleNo
+ *         - diagnosis
  *       properties:
  *         _id:
  *           type: string
@@ -23,9 +27,6 @@ const mongoose = require('mongoose');
  *         client:
  *           type: string
  *           description: Client ID reference
- *         farmLocation:
- *           type: string
- *           description: Location of the farm
  *         coordinates:
  *           type: object
  *           properties:
@@ -82,7 +83,7 @@ const mongoose = require('mongoose');
  *               format: date
  *             situation:
  *               type: string
- *               enum: [Open, Closed, Pending]
+ *               enum: [Ongoing, Closed]
  *             fulfillingDate:
  *               type: string
  *               format: date
@@ -100,24 +101,20 @@ const mongoose = require('mongoose');
 const medicationSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: [true, 'Medication name is required'],
     trim: true,
     maxlength: [100, 'Medication name cannot exceed 100 characters']
   },
   dosage: {
     type: String,
-    required: [true, 'Dosage is required'],
     trim: true,
     maxlength: [50, 'Dosage cannot exceed 50 characters']
   },
   quantity: {
     type: Number,
-    required: [true, 'Quantity is required'],
     min: [0, 'Quantity cannot be negative']
   },
-  route: {
+  administrationRoute: {
     type: String,
-    required: [true, 'Administration route is required'],
     enum: {
       values: ['Oral', 'Injection', 'Topical', 'Intravenous', 'Intramuscular', 'Subcutaneous'],
       message: 'Invalid administration route'
@@ -127,22 +124,31 @@ const medicationSchema = new mongoose.Schema({
 
 const requestSchema = new mongoose.Schema({
   date: {
-    type: Date,
-    required: [true, 'Request date is required']
+    type: Date
   },
   situation: {
     type: String,
-    required: [true, 'Request situation is required'],
     enum: {
-      values: ['Open', 'Closed', 'Pending'],
-      message: 'Situation must be one of: Open, Closed, Pending'
+      values: ['Open', 'Closed'],
+      message: 'Situation must be one of: Open, Closed'
     }
   },
   fulfillingDate: {
     type: Date,
     validate: {
       validator: function(date) {
-        return !date || date >= this.date;
+        // Allow empty fulfilling date or ensure it's not before request date
+        if (!date) return true;
+        if (!this.date) return true;
+        
+        // Compare dates only (ignore time)
+        const requestDate = new Date(this.date);
+        const fulfillingDate = new Date(date);
+        
+        requestDate.setHours(0, 0, 0, 0);
+        fulfillingDate.setHours(0, 0, 0, 0);
+        
+        return fulfillingDate >= requestDate;
       },
       message: 'Fulfilling date cannot be before request date'
     }
@@ -159,19 +165,47 @@ const mobileClinicSchema = new mongoose.Schema({
   },
   date: {
     type: Date,
-    required: [true, 'Date is required']
+    required: [true, 'Date is required'],
+    validate: {
+      validator: function(date) {
+        return date <= new Date();
+      },
+      message: 'Date cannot be in the future'
+    }
   },
+  holdingCode: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HoldingCode'
+  },
+  // Client reference (ObjectId) - optional if flat client fields are provided
   client: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Client',
-    required: false // Made optional for flexible import
+    ref: 'Client'
   },
-  farmLocation: {
+  
+  // Flat client fields (alternative to client reference)
+  clientName: {
     type: String,
-    required: false, // Made optional for flexible import
     trim: true,
-    maxlength: [200, 'Location cannot exceed 200 characters'],
-    default: ''
+    maxlength: [100, 'Client name cannot exceed 100 characters']
+  },
+  clientId: {
+    type: String,
+    trim: true,
+    maxlength: [20, 'Client ID cannot exceed 20 characters']
+  },
+  clientPhone: {
+    type: String,
+    trim: true,
+    maxlength: [15, 'Client phone cannot exceed 15 characters']
+  },
+  clientBirthDate: {
+    type: Date
+  },
+  clientVillage: {
+    type: String,
+    trim: true,
+    maxlength: [100, 'Client village cannot exceed 100 characters']
   },
   coordinates: {
     latitude: {
@@ -187,17 +221,14 @@ const mobileClinicSchema = new mongoose.Schema({
   },
   supervisor: {
     type: String,
-    required: false, // Made optional for flexible import
+    required: [true, 'Supervisor is required'],
     trim: true,
-    maxlength: [100, 'Supervisor name cannot exceed 100 characters'],
-    default: 'N/A'
+    maxlength: [100, 'Supervisor name cannot exceed 100 characters']
   },
   vehicleNo: {
     type: String,
-    required: false, // Made optional for flexible import
     trim: true,
-    maxlength: [20, 'Vehicle number cannot exceed 20 characters'],
-    default: 'N/A'
+    maxlength: [20, 'Vehicle number cannot exceed 20 characters']
   },
   animalCounts: {
     sheep: {
@@ -228,31 +259,25 @@ const mobileClinicSchema = new mongoose.Schema({
   },
   diagnosis: {
     type: String,
-    required: false, // Made optional for flexible import
     trim: true,
-    maxlength: [500, 'Diagnosis cannot exceed 500 characters'],
-    default: ''
+    maxlength: [500, 'Diagnosis cannot exceed 500 characters']
   },
   interventionCategory: {
     type: String,
-    required: false, // Made optional for flexible import
+    required: [true, 'Intervention category is required'],
     enum: {
-      values: ['Emergency', 'Routine', 'Preventive', 'Follow-up'],
-      message: 'Intervention category must be one of: Emergency, Routine, Preventive, Follow-up'
-    },
-    default: 'Routine'
+      values: ['Emergency', 'Routine', 'Preventive', 'Follow-up', 'Clinical Examination', 'Ultrasonography', 'Lab Analysis', 'Surgical Operation', 'Farriery'],
+      message: 'Intervention category must be one of: Emergency, Routine, Preventive, Follow-up, Clinical Examination, Ultrasonography, Lab Analysis, Surgical Operation, Farriery'
+    }
   },
   treatment: {
     type: String,
-    required: false, // Made optional for flexible import
     trim: true,
-    maxlength: [1000, 'Treatment description cannot exceed 1000 characters'],
-    default: ''
+    maxlength: [1000, 'Treatment description cannot exceed 1000 characters']
   },
   medicationsUsed: [medicationSchema],
   request: {
-    type: requestSchema,
-    required: false // Made optional for flexible import
+    type: requestSchema
   },
   followUpRequired: {
     type: Boolean,
@@ -280,11 +305,6 @@ const mobileClinicSchema = new mongoose.Schema({
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  },
-  // Store custom fields from flexible import
-  customImportData: {
-    type: mongoose.Schema.Types.Mixed,
-    default: {}
   }
 }, {
   timestamps: true,
@@ -385,8 +405,18 @@ mobileClinicSchema.statics.getStatistics = async function(filters = {}) {
   };
 };
 
-// Pre-save middleware to update updatedBy
+// Pre-save middleware to validate client data and update updatedBy
 mobileClinicSchema.pre('save', function(next) {
+  // Validate that either client reference or flat client fields are provided
+  const hasClientReference = this.client;
+  const hasFlatClientFields = this.clientName && this.clientId;
+  
+  if (!hasClientReference && !hasFlatClientFields) {
+    const error = new Error('Either client reference or flat client fields (clientName, clientId) must be provided');
+    error.name = 'ValidationError';
+    return next(error);
+  }
+  
   if (this.isModified() && !this.isNew) {
     this.updatedBy = this.constructor.currentUser;
   }

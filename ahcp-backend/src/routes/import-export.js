@@ -8,16 +8,15 @@ const mongoose = require('mongoose');
 
 // Import middleware
 const { auth } = require('../middleware/auth');
-const jwt = require('jsonwebtoken');
 
 // Import models
-const User = require('../models/User');
 const Client = require('../models/Client');
 const Vaccination = require('../models/Vaccination');
 const ParasiteControl = require('../models/ParasiteControl');
 const MobileClinic = require('../models/MobileClinic');
 const Laboratory = require('../models/Laboratory');
 const EquineHealth = require('../models/EquineHealth');
+const HoldingCode = require('../models/HoldingCode');
 
 const router = express.Router();
 
@@ -518,6 +517,7 @@ const generateCSV = (data, headers) => {
         } else if (header === 'horse' && row.animalCounts && row.animalCounts.horse) {
           value = row.animalCounts.horse || 0;
         }
+       
         // Handle speciesCounts for Laboratory
         else if (header === 'sheep' && row.speciesCounts && row.speciesCounts.sheep) {
           value = row.speciesCounts.sheep || 0;
@@ -878,7 +878,7 @@ const handleExport = (Model, filter = {}, fields = [], filename = 'export') => {
           res.send(csvContent);
         } else {
           const excelBuffer = generateExcel([], fields);
-          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          res.setHeader('Content-Type', 'application/vnd.Ongoingxmlformats-officedocument.spreadsheetml.sheet');
           res.setHeader('Content-Disposition', `attachment; filename=${filename}.xlsx`);
           res.send(excelBuffer);
         }
@@ -894,7 +894,7 @@ const handleExport = (Model, filter = {}, fields = [], filename = 'export') => {
       } else {
         // Default to Excel format
         const excelBuffer = generateExcel(records, fields);
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Type', 'application/vnd.Ongoingxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename=${filename}.xlsx`);
         res.send(excelBuffer);
       }
@@ -923,108 +923,6 @@ const handleTemplate = (templateData, filename = 'template') => {
       res.status(500).json({
         success: false,
         message: 'Error generating template: ' + error.message
-      });
-    }
-  };
-};
-
-// Dromo Webhook Handler (no auth required)
-const handleDromoWebhook = (Model, processRowFunction) => {
-  return async (req, res) => {
-    try {
-      console.log('🎯 Dromo webhook called for:', Model.modelName);
-      console.log('🎯 Request skipAuth:', req.skipAuth);
-      console.log('🎯 Headers:', Object.keys(req.headers));
-      
-      // Always use admin user for webhook imports
-      const adminUser = await User.findOne({ role: 'super_admin' });
-      const userId = adminUser ? adminUser._id : null;
-      
-      if (!userId) {
-        console.error('❌ No admin user found');
-        return res.status(500).json({
-          success: false,
-          message: 'لا يوجد مستخدم إداري في النظام'
-        });
-      }
-      
-      console.log('✅ Using admin user:', adminUser.name, 'ID:', userId);
-      
-      // Get data from Dromo webhook (try multiple formats)
-      let rows = null;
-      if (req.body.data && Array.isArray(req.body.data)) {
-        rows = req.body.data;
-      } else if (req.body.rows && Array.isArray(req.body.rows)) {
-        rows = req.body.rows;
-      } else if (Array.isArray(req.body)) {
-        rows = req.body;
-      } else if (req.body.validData && Array.isArray(req.body.validData)) {
-        rows = req.body.validData;
-      }
-      
-      if (!rows || !Array.isArray(rows) || rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'لا توجد بيانات صالحة للاستيراد'
-        });
-      }
-      
-      console.log(`📊 Processing ${rows.length} rows for ${Model.modelName}`);
-      
-      // Process and save rows
-      const savedRecords = [];
-      const errors = [];
-      
-      for (let i = 0; i < rows.length; i++) {
-        try {
-          const record = await processRowFunction(rows[i], userId, []);
-          if (record) {
-            savedRecords.push(record);
-          }
-        } catch (error) {
-          console.error(`❌ Error processing row ${i + 1}:`, error.message);
-          errors.push({
-            rowIndex: i + 1,
-            error: error.message,
-            data: rows[i]
-          });
-        }
-      }
-      
-      console.log(`✅ Successfully saved ${savedRecords.length} records, ${errors.length} errors`);
-      
-      // Log saved records for debugging
-      if (savedRecords.length > 0) {
-        console.log('💾 Sample saved record:', JSON.stringify(savedRecords[0], null, 2));
-        console.log('💾 Record IDs:', savedRecords.map(r => r._id));
-      }
-      
-      // Verify records are actually in database
-      const dbCount = await Model.countDocuments();
-      console.log(`📊 Total records in ${Model.modelName} collection: ${dbCount}`);
-      
-      res.json({
-        success: true,
-        message: `تم استيراد ${savedRecords.length} سجل بنجاح`,
-        insertedCount: savedRecords.length,
-        totalRows: rows.length,
-        successRows: savedRecords.length,
-        errorRows: errors.length,
-        errors: errors,
-        
-        batchId: `dromo_${Date.now()}_${Model.modelName.toLowerCase()}`,
-        debug: {
-          totalInDatabase: dbCount,
-          sampleRecord: savedRecords[0] ? savedRecords[0]._id : null
-        }
-      });
-      
-    } catch (error) {
-      console.error('❌ Dromo webhook error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'حدث خطأ أثناء الاستيراد',
-        error: error.message
       });
     }
   };
@@ -1314,19 +1212,33 @@ const findOrCreateClient = async (row, userId) => {
     const nationalId = clientId || `TEMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     try {
-      client = new Client({
+      // Check if client exists by name and phone (in case ID is different)
+      const existingClientByNamePhone = await Client.findOne({
         name: clientName,
-        nationalId: nationalId,
-        phone: clientPhone || '',
-        village: clientVillage || '',
-        detailedAddress: clientAddress || '',
-        status: 'نشط',
-        animals: [],
-        availableServices: [],
-        createdBy: userId
+        phone: clientPhone
       });
-      await client.save();
-      console.log(`✅ Successfully created client: ${client.name} (${client.nationalId})`);
+      
+      if (existingClientByNamePhone) {
+        console.log(`✅ Found existing client by name and phone: ${existingClientByNamePhone.name}`);
+        client = existingClientByNamePhone;
+      } else {
+        client = new Client({
+          name: clientName,
+          nationalId: nationalId,
+          phone: clientPhone || '',
+          village: clientVillage || '',
+          detailedAddress: clientAddress || '',
+          status: 'نشط',
+          animals: [],
+          availableServices: [],
+          createdBy: userId,
+          // Add metadata to track import source
+          importSource: 'auto_import',
+          importDate: new Date()
+        });
+        await client.save();
+        console.log(`✅ Successfully created new client: ${client.name} (${client.nationalId})`);
+      }
     } catch (error) {
       console.error(`❌ Error creating client:`, error);
       throw new Error(`Failed to create client: ${error.message}`);
@@ -1528,27 +1440,23 @@ const processUnifiedEnums = (row) => {
     interventionCategory: (() => {
       const category = (row['Intervention Category'] || row.interventionCategory || 'Routine').toString().trim();
       const categoryMap = {
-        'emergency': 'Emergency', 'urgent': 'Emergency', 'عاجل': 'Emergency', 'طوارئ': 'Emergency',
-        'routine': 'Routine', 'عادي': 'Routine', 'روتيني': 'Routine',
-        'preventive': 'Preventive', 'وقائي': 'Preventive', 'prevention': 'Preventive',
-        'follow-up': 'Follow-up', 'followup': 'Follow-up', 'متابعة': 'Follow-up', 'follow': 'Follow-up'
+        'Clinical Examination': 'Clinical Examination', 'Surgical Operation': 'Surgical Operation', 'Ultrasonography': 'Ultrasonography', 'Preventive': 'Preventive', 'Lab Analysis': 'Lab Analysis', 'Farriery': 'Farriery'
       };
-      
       const lowerCategory = category.toLowerCase();
       if (categoryMap[lowerCategory]) {
         return categoryMap[lowerCategory];
       }
       
-      if (['Emergency', 'Routine', 'Preventive', 'Follow-up'].includes(category)) {
+      if (['Clinical Examination', 'Surgical Operation', 'Ultrasonography', 'Preventive', 'Lab Analysis', 'Farriery'].includes(category)) {
         return category;
       }
       
       return 'Routine';
     })(),
     requestSituation: (() => {
-      const status = (row['Request Status'] || row.requestStatus || 'Open').toString().trim();
+      const status = (row['Request Status'] || row.requestStatus || 'Ongoing').toString().trim();
       const statusMap = {
-        'open': 'Open', 'مفتوح': 'Open', 'نشط': 'Open', 'active': 'Open',
+        'Ongoing': 'Ongoing', 'مفتوح': 'Ongoing', 'نشط': 'Ongoing', 'active': 'Ongoing',
         'closed': 'Closed', 'مغلق': 'Closed', 'منتهي': 'Closed', 'finished': 'Closed',
         'pending': 'Pending', 'في الانتظار': 'Pending', 'معلق': 'Pending', 'waiting': 'Pending'
       };
@@ -1558,11 +1466,11 @@ const processUnifiedEnums = (row) => {
         return statusMap[lowerStatus];
       }
       
-      if (['Open', 'Closed', 'Pending'].includes(status)) {
+      if (['Ongoing', 'Closed', 'Pending'].includes(status)) {
         return status;
       }
       
-      return 'Open';
+      return 'Ongoing';
     })()
   };
 };
@@ -1580,7 +1488,7 @@ const processUnifiedCustomData = (row) => {
       if (!['Serial No', 'Date', 'Name', 'ID', 'Phone', 'Location', 'N Coordinate', 'E Coordinate', 
             'Supervisor', 'Vehicle No.', 'Sheep', 'Goats', 'Camel', 'Horse', 'Cattle', 
             'Diagnosis', 'Intervention Category', 'Treatment', 'Request Date', 'Request Status', 
-            'Request Fulfilling Date', 'category', 'Remarks'].includes(key)) {
+            'Request Fulfilling Date', 'category', 'Remarks' ,'Holding Code'].includes(key)) {
         acc[key] = row[key];
       }
       return acc;
@@ -1648,11 +1556,55 @@ const parseDateField = (dateString) => {
     return dateValue;
   }
   
+  // Handle YYYY/MM/DD format (like 1985/03/15)
+  if (dateStr.match(/^\d{4}\/\d{1,2}\/\d{1,2}$/)) {
+    const [year, month, day] = dateStr.split('/');
+    const dateValue = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+    console.log(`🔍 Parsed YYYY/MM/DD format: ${dateStr} -> ${dateValue}`);
+    return dateValue;
+  }
+  
   // Handle YYYY-MM-DD format (ISO format)
   if (dateStr.match(/^\d{4}-\d{1,2}-\d{1,2}$/)) {
     const dateValue = new Date(dateStr);
     console.log(`🔍 Parsed YYYY-MM-DD format: ${dateStr} -> ${dateValue}`);
     return dateValue;
+  }
+  
+  // Handle YYYY-DD-MM format (alternative format)
+  if (dateStr.match(/^\d{4}-\d{1,2}-\d{1,2}$/)) {
+    const [year, dayOrMonth, monthOrDay] = dateStr.split('-');
+    
+    // Try both interpretations and pick the valid one
+    const option1 = new Date(`${year}-${dayOrMonth.padStart(2, '0')}-${monthOrDay.padStart(2, '0')}`); // YYYY-MM-DD
+    const option2 = new Date(`${year}-${monthOrDay.padStart(2, '0')}-${dayOrMonth.padStart(2, '0')}`); // YYYY-DD-MM
+    
+    // Check which one is valid based on day/month ranges
+    const day1 = parseInt(monthOrDay);
+    const month1 = parseInt(dayOrMonth);
+    const day2 = parseInt(dayOrMonth);
+    const month2 = parseInt(monthOrDay);
+    
+    // If first interpretation has invalid day (>31) or month (>12), try second
+    if ((day1 > 31 || month1 > 12) && day2 <= 31 && month2 <= 12) {
+      console.log(`🔍 Parsed YYYY-DD-MM format: ${dateStr} -> ${option2}`);
+      return option2;
+    }
+    // If second interpretation has invalid day (>31) or month (>12), use first
+    else if ((day2 > 31 || month2 > 12) && day1 <= 31 && month1 <= 12) {
+      console.log(`🔍 Parsed YYYY-MM-DD format: ${dateStr} -> ${option1}`);
+      return option1;
+    }
+    // If both are valid, prefer YYYY-MM-DD (standard ISO format)
+    else if (!isNaN(option1.getTime())) {
+      console.log(`🔍 Parsed YYYY-MM-DD format (ambiguous, using standard): ${dateStr} -> ${option1}`);
+      return option1;
+    }
+    // Fallback to YYYY-DD-MM if YYYY-MM-DD is invalid
+    else if (!isNaN(option2.getTime())) {
+      console.log(`🔍 Parsed YYYY-DD-MM format (fallback): ${dateStr} -> ${option2}`);
+      return option2;
+    }
   }
   
   // Handle DD-MM-YYYY format
@@ -1728,21 +1680,21 @@ const processVaccinationRow = async (row, userId, errors) => {
       date: dates.mainDate,
       client: client._id,
       farmLocation: getFieldValue(row, [
-        'farmLocation', 'Location', 'location', 'Farm Location',
-        'الموقع', 'موقع المزرعة', 'ابو خريط'
+        'Location', 'location', 'Farm Location', 'farmLocation',
+        'الموقع', 'موقع المزرعة'
       ]) || 'N/A',
       supervisor: getFieldValue(row, [
-        'supervisor', 'Supervisor', 'المشرف'
+        'Supervisor', 'supervisor', 'المشرف'
       ]) || 'Default Supervisor',
       team: getFieldValue(row, [
-        'team', 'Team', 'الفريق'
+        'Team', 'team', 'الفريق'
       ]) || 'Default Team',
       vehicleNo: getFieldValue(row, [
-        'vehicleNo', 'Vehicle No.', 'Vehicle No', 'vehicle_no',
+        'Vehicle No.', 'Vehicle No', 'vehicleNo', 'vehicle_no',
         'رقم المركبة'
       ]) || 'N/A',
       vaccineType: getFieldValue(row, [
-        'vaccineType', 'Vaccine', 'vaccine_type', 'Vaccine Type',
+        'Vaccine', 'vaccineType', 'vaccine_type', 'Vaccine Type',
         'نوع اللقاح', 'اللقاح'
       ]) || 'Default Vaccine',
       vaccineCategory: processEnumValue(
@@ -1795,6 +1747,7 @@ const processVaccinationRow = async (row, userId, errors) => {
         },
         'Easy'
       ),
+      holdingCode: await processHoldingCodeReference(row),
       request: processRequest(row, dates),
       remarks: getFieldValue(row, ['Remarks', 'remarks', 'ملاحظات']) || '',
       customImportData: processCustomImportData(row)
@@ -1885,7 +1838,7 @@ const processParasiteControlRow = async (row, userId, errors) => {
         {
           'healthy': 'Healthy', 'صحي': 'Healthy', 'سليم': 'Healthy',
           'sick': 'Sick', 'مريض': 'Sick', 'sporadic': 'Sick', 'sporadic cases': 'Sick',
-          'under treatment': 'Under Treatment', 'تحت العلاج': 'Under Treatment'
+          'under treatment': 'Under Treatment', 'تحت العلاج': 'Under Treatment' , 'Sporadic Cases': 'Sporadic Cases', 'sporadic Cases': 'sporadic Cases'
         },
         'Healthy'
       ),
@@ -1899,6 +1852,7 @@ const processParasiteControlRow = async (row, userId, errors) => {
         },
         'Comply'
       ),
+      holdingCode: await processHoldingCodeReference(row),
       request: processRequest(row, dates),
       remarks: getFieldValue(row, ['Remarks', 'remarks', 'ملاحظات']) || '',
       customImportData: processCustomImportData(row),
@@ -2020,6 +1974,38 @@ const getFieldValue = (row, fieldNames) => {
 };
 
 /**
+ * Process holding code reference - find HoldingCode by code and return ObjectId
+ */
+const processHoldingCodeReference = async (row) => {
+  try {
+    const holdingCodeValue = getFieldValue(row, [
+      'Holding Code', 'holdingCode', 'holding_code', 'Code','Holding Code',
+      'رمز الحيازة', 'الرمز'
+    ]);
+    
+    if (!holdingCodeValue || holdingCodeValue.trim() === '') {
+      return null;
+    }
+    
+    // Find holding code by code field
+    const holdingCode = await HoldingCode.findOne({ 
+      code: holdingCodeValue.trim() 
+    });
+    
+    if (holdingCode) {
+      console.log(`✅ Found holding code: ${holdingCodeValue} -> ${holdingCode._id}`);
+      return holdingCode._id;
+    } else {
+      console.log(`⚠️ Holding code not found: ${holdingCodeValue}`);
+      return null;
+    }
+  } catch (error) {
+    console.error('Error processing holding code reference:', error);
+    return null;
+  }
+};
+
+/**
  * Enhanced unified client processor with better validation
  */
 const processUnifiedClientEnhanced = async (row, userId, options = {}) => {
@@ -2086,22 +2072,37 @@ const processUnifiedClientEnhanced = async (row, userId, options = {}) => {
     
     // Create new client if not found and allowed
     if (!client && createIfNotFound) {
-      const newClient = new Client({
-        name: clientName || 'غير محدد',
-        nationalId: clientId || generateValidNationalId(),
-        phone: clientPhone || generateDefaultPhone(),
-        village: clientVillage || '',
-        detailedAddress: clientAddress || clientVillage || '',
-        birthDate: parseBirthDate(row),
-        status: 'نشط',
-        animals: [],
-        availableServices: [],
-        createdBy: userId
-      });
-      
-      await newClient.save();
-      client = newClient;
-      console.log(`✅ Created new client: ${client.name}`);
+      try {
+        const newClient = new Client({
+          name: clientName || 'غير محدد',
+          nationalId: clientId || generateValidNationalId(),
+          phone: clientPhone || generateDefaultPhone(),
+          village: clientVillage || '',
+          detailedAddress: clientAddress || clientVillage || '',
+          birthDate: parseBirthDate(row),
+          status: 'نشط',
+          animals: [],
+          availableServices: [],
+          createdBy: userId
+        });
+        
+        await newClient.save();
+        client = newClient;
+        console.log(`✅ Created new client: ${client.name}`);
+      } catch (saveError) {
+        // If duplicate key error, try to find existing client again
+        if (saveError.code === 11000 && saveError.keyPattern && saveError.keyPattern.nationalId) {
+          console.log(`🔄 Duplicate nationalId detected, finding existing client: ${clientId}`);
+          client = await Client.findOne({ nationalId: clientId });
+          if (client) {
+            console.log(`✅ Found existing client: ${client.name}`);
+          } else {
+            throw new Error(`Client with nationalId ${clientId} exists but could not be retrieved`);
+          }
+        } else {
+          throw saveError;
+        }
+      }
     }
     
     return client;
@@ -2182,7 +2183,21 @@ const processUnifiedDatesEnhanced = (row) => {
       ]);
       if (field) {
         const parsed = parseDateField(field);
-        return parsed && !isNaN(parsed.getTime()) ? parsed : undefined;
+        if (parsed && !isNaN(parsed.getTime())) {
+          // Get request date for comparison
+          const requestField = getFieldValue(row, [
+            'Request Date', 'requestDate', 'request_date',
+            'تاريخ الطلب'
+          ]);
+          const requestDate = requestField ? parseDateField(requestField) : mainDate;
+          
+          // Ensure fulfilling date is not before request date
+          if (parsed < (requestDate || mainDate)) {
+            console.log(`⚠️ Fulfilling date ${parsed.toISOString()} is before request date ${(requestDate || mainDate).toISOString()}, using request date instead`);
+            return requestDate || mainDate;
+          }
+          return parsed;
+        }
       }
       return undefined;
     })(),
@@ -2437,11 +2452,11 @@ const processRequest = (row, dates) => {
       row,
       ['Request Status', 'Request Situation', 'requestSituation', 'requestStatus', 'حالة الطلب'],
       {
-        'open': 'Open', 'مفتوح': 'Open', 'نشط': 'Open', 'active': 'Open',
+        'Ongoing': 'Ongoing', 'مفتوح': 'Ongoing', 'نشط': 'Ongoing', 'active': 'Ongoing',
         'closed': 'Closed', 'مغلق': 'Closed', 'منتهي': 'Closed', 'finished': 'Closed',
         'pending': 'Pending', 'في الانتظار': 'Pending', 'معلق': 'Pending', 'waiting': 'Pending'
       },
-      'Open'
+      'Ongoing'
     ),
     fulfillingDate: dates.fulfillingDate
   };
@@ -2541,6 +2556,7 @@ const processLaboratoryRow = async (row, userId, errors) => {
         'testResults', 'Test Results', 'test_results', 'results',
         'النتائج', 'نتائج الفحص'
       ]), []),
+      holdingCode: await processHoldingCodeReference(row),
       remarks: getFieldValue(row, ['Remarks', 'remarks', 'ملاحظات']) || '',
       customImportData: processCustomImportData(row),
       createdBy: userId
@@ -2657,7 +2673,7 @@ router.get('/clients/export', auth, handleExport(Client, {}, [
 
 router.get('/vaccination/export', auth, handleExport(Vaccination, {}, [
   'serialNo', 'date', 'client', 'clientBirthDate', 'farmLocation', 'supervisor', 'team', 'vehicleNo', 
-  'vaccineType', 'vaccineCategory', 'sheep', 'sheepFemale', 'sheepVaccinated', 
+  'vaccineType', 'vaccineCategory', 'holdingCode', 'sheep', 'sheepFemale', 'sheepVaccinated', 
   'goats', 'goatsFemale', 'goatsVaccinated', 'camel', 'camelFemale', 'camelVaccinated', 
   'cattle', 'cattleFemale', 'cattleVaccinated', 'herdNumber', 'herdFemales', 
   'totalVaccinated', 'herdHealth', 'animalsHandling', 'labours', 'reachableLocation', 'remarks'
@@ -2665,7 +2681,7 @@ router.get('/vaccination/export', auth, handleExport(Vaccination, {}, [
 
 router.get('/parasite-control/export', auth, handleExport(ParasiteControl, {}, [
   'serialNo', 'date', 'client', 'clientBirthDate', 'herdLocation', 'supervisor', 'vehicleNo', 
-  'sheepTotal', 'sheepYoung', 'sheepFemale', 'sheepTreated', 'goatsTotal', 
+  'holdingCode', 'sheepTotal', 'sheepYoung', 'sheepFemale', 'sheepTreated', 'goatsTotal', 
   'goatsYoung', 'goatsFemale', 'goatsTreated', 'camelTotal', 'camelYoung', 
   'camelFemale', 'camelTreated', 'cattleTotal', 'cattleYoung', 'cattleFemale', 
   'cattleTreated', 'horseTotal', 'horseYoung', 'horseFemale', 'horseTreated', 
@@ -2676,19 +2692,19 @@ router.get('/parasite-control/export', auth, handleExport(ParasiteControl, {}, [
 
 router.get('/mobile-clinics/export', auth, handleExport(MobileClinic, {}, [
   'serialNo', 'date', 'client', 'clientBirthDate', 'farmLocation', 'supervisor', 'vehicleNo', 
-  'sheep', 'goats', 'camel', 'cattle', 'horse', 'diagnosis', 'interventionCategory', 
+  'holdingCode', 'sheep', 'goats', 'camel', 'cattle', 'horse', 'diagnosis', 'interventionCategory', 
   'treatment', 'medicationsUsed', 'followUpRequired', 'followUpDate', 'remarks'
 ], 'mobile-clinics'));
 
 router.get('/laboratories/export', auth, handleExport(Laboratory, {}, [
   'serialNo', 'date', 'sampleCode', 'clientName', 'clientId', 'clientBirthDate', 'clientPhone', 
-  'sheep', 'goats', 'camel', 'cattle', 'horse', 'otherSpecies', 'collector', 
+  'holdingCode', 'sheep', 'goats', 'camel', 'cattle', 'horse', 'otherSpecies', 'collector', 
   'sampleType', 'sampleNumber', 'positiveCases', 'negativeCases', 'testResults', 'remarks'
 ], 'laboratories'));
 
 router.get('/equine-health/export', auth, handleExport(EquineHealth, {}, [
   'serialNo', 'date', 'client', 'clientBirthDate', 'farmLocation', 'coordinates', 'supervisor', 
-  'vehicleNo', 'horseCount', 'diagnosis', 'interventionCategory', 
+  'vehicleNo', 'holdingCode', 'horseCount', 'diagnosis', 'interventionCategory', 
   'treatment', 'followUpRequired', 'followUpDate', 'remarks'
 ], 'equine-health'));
 
@@ -2931,19 +2947,11 @@ router.post('/clients/import', auth, handleImport(Client, async (row, userId, er
   }
 }));
 
-// Original import routes (with auth)
 router.post('/vaccination/import', auth, handleImport(Vaccination, processVaccinationRow));
 router.post('/parasite-control/import', auth, handleImport(ParasiteControl, processParasiteControlRow));
 router.post('/mobile-clinics/import', auth, handleImport(MobileClinic, processMobileClinicRow));
 router.post('/laboratories/import', auth, handleImport(Laboratory, processLaboratoryRow));
 router.post('/equine-health/import', auth, handleImport(EquineHealth, processEquineHealthRow));
-
-// Dromo webhook routes (no auth - handled internally)
-router.post('/vaccination/import-dromo', handleDromoWebhook(Vaccination, processVaccinationRow));
-router.post('/parasite-control/import-dromo', handleDromoWebhook(ParasiteControl, processParasiteControlRow));
-router.post('/mobile-clinics/import-dromo', handleDromoWebhook(MobileClinic, processMobileClinicRow));
-router.post('/laboratories/import-dromo', handleDromoWebhook(Laboratory, processLaboratoryRow));
-router.post('/equine-health/import-dromo', handleDromoWebhook(EquineHealth, processEquineHealthRow));
 
 // Enhanced import routes with better error handling
 router.post('/laboratories/import-enhanced', auth, handleImport(Laboratory, processLaboratoryRow));
@@ -2982,244 +2990,30 @@ router.post('/equine-health/import-enhanced', auth, (req, res, next) => {
   handleImport(EquineHealth, processEquineHealthRow)(req, res, next);
 });
 
-// Test endpoint for Dromo webhook
-router.get('/dromo-test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Dromo webhook endpoint is accessible',
-    timestamp: new Date().toISOString(),
-    headers: req.headers
-  });
+// Dromo import routes
+router.post('/laboratories/import-dromo', auth, (req, res, next) => {
+  console.log('🎯 Dromo laboratories import route called');
+  handleImport(Laboratory, processLaboratoryRow)(req, res, next);
 });
 
-router.post('/dromo-test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Dromo webhook POST test successful',
-    body: req.body,
-    headers: req.headers,
-    timestamp: new Date().toISOString()
-  });
+router.post('/vaccination/import-dromo', auth, (req, res, next) => {
+  console.log('🎯 Dromo vaccination import route called');
+  handleImport(Vaccination, processVaccinationRow)(req, res, next);
 });
 
-// Dromo Import Endpoint for Public Mode (NO AUTH - uses webhook authentication)
-router.post('/dromo-import-public', async (req, res) => {
-  try {
-    console.log('🎯 Dromo PUBLIC import endpoint called');
-    
-    // Get table type from headers
-    const tableType = req.headers['x-table-type'] || req.body.tableType;
-    const authHeader = req.headers.authorization;
-    
-    // Basic authentication check (if token provided)
-    let userId = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id);
-        if (user) userId = user._id;
-      } catch (err) {
-        console.log('⚠️ Invalid token, using default user');
-      }
-    }
-    
-    // Use default user if no valid token
-    if (!userId) {
-      const defaultUser = await User.findOne({ role: 'admin' });
-      userId = defaultUser ? defaultUser._id : null;
-    }
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'لا يوجد مستخدم صالح للاستيراد'
-      });
-    }
-    
-    // Log the full request for debugging
-    console.log('📝 Full request body:', JSON.stringify(req.body, null, 2));
-    console.log('📝 Request headers:', JSON.stringify(req.headers, null, 2));
-    
-    // Get rows from Dromo webhook - try multiple possible structures
-    let rows = null;
-    
-    // Dromo might send data in different formats
-    if (req.body.data && Array.isArray(req.body.data)) {
-      rows = req.body.data;
-    } else if (req.body.rows && Array.isArray(req.body.rows)) {
-      rows = req.body.rows;
-    } else if (Array.isArray(req.body)) {
-      rows = req.body;
-    } else if (req.body.validData && Array.isArray(req.body.validData)) {
-      rows = req.body.validData;
-    } else if (req.body.results && Array.isArray(req.body.results)) {
-      rows = req.body.results;
-    }
-    
-    console.log(`📊 Found ${rows ? rows.length : 0} rows in request`);
-    
-    if (!tableType) {
-      return res.status(400).json({
-        success: false,
-        message: 'نوع الجدول غير محدد - يجب إرسال X-Table-Type header'
-      });
-    }
-    
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'لا توجد بيانات صالحة للاستيراد',
-        debug: {
-          bodyKeys: Object.keys(req.body),
-          bodyType: typeof req.body,
-          isArray: Array.isArray(req.body)
-        }
-      });
-    }
-    
-    console.log(`📊 Processing ${rows.length} rows for table: ${tableType}`);
-    
-    // Map table types to models and processors
-    const tableConfig = {
-      'laboratory': { model: Laboratory, processor: processLaboratoryRow },
-      'vaccination': { model: Vaccination, processor: processVaccinationRow },
-      'parasite_control': { model: ParasiteControl, processor: processParasiteControlRow },
-      'mobile': { model: MobileClinic, processor: processMobileClinicRow },
-      'equine_health': { model: EquineHealth, processor: processEquineHealthRow }
-    };
-    
-    const config = tableConfig[tableType];
-    if (!config) {
-      return res.status(400).json({
-        success: false,
-        message: `نوع جدول غير مدعوم: ${tableType}`
-      });
-    }
-    
-    // Process and SAVE rows
-    const savedRecords = [];
-    const errors = [];
-    
-    for (let i = 0; i < rows.length; i++) {
-      try {
-        // Process row - this creates AND saves the record
-        const record = await config.processor(rows[i], userId, []);
-        if (record) {
-          savedRecords.push(record);
-        }
-      } catch (error) {
-        console.error(`❌ Error processing row ${i + 1}:`, error.message);
-        errors.push({
-          rowIndex: i + 1,
-          error: error.message,
-          data: rows[i]
-        });
-      }
-    }
-    
-    console.log(`✅ Successfully saved ${savedRecords.length} records, ${errors.length} errors`);
-    
-    res.json({
-      success: true,
-      message: `تم استيراد ${savedRecords.length} سجل بنجاح`,
-      insertedCount: savedRecords.length,
-      errors: errors,
-      batchId: `dromo_public_${Date.now()}_${tableType}`,
-      savedRecords: savedRecords.map(r => ({ _id: r._id, serialNo: r.serialNo }))
-    });
-    
-  } catch (error) {
-    console.error('❌ Dromo PUBLIC import error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'حدث خطأ أثناء الاستيراد',
-      error: error.message
-    });
-  }
+router.post('/parasite-control/import-dromo', auth, (req, res, next) => {
+  console.log('🎯 Dromo parasite control import route called');
+  handleImport(ParasiteControl, processParasiteControlRow)(req, res, next);
 });
 
-// Dromo Import Endpoint (Original - requires auth)
-router.post('/dromo-import', auth, async (req, res) => {
-  try {
-    console.log('🎯 Dromo import endpoint called');
-    
-    const { tableType, rows, dromoBackendKey } = req.body;
-    
-    // Security check for Dromo backend key
-    const expectedBackendKey = process.env.DROMO_BACKEND_KEY;
-    if (expectedBackendKey && dromoBackendKey !== expectedBackendKey) {
-      console.log('❌ Dromo security check failed');
-      return res.status(401).json({
-        success: false,
-        message: 'غير مصرح بالوصول - مفتاح Dromo غير صحيح'
-      });
-    }
-    
-    if (!tableType || !rows || !Array.isArray(rows)) {
-      return res.status(400).json({
-        success: false,
-        message: 'بيانات غير صحيحة - يجب تحديد نوع الجدول والصفوف'
-      });
-    }
-    
-    console.log(`📊 Processing ${rows.length} rows for table: ${tableType}`);
-    
-    // Map table types to models and processors
-    const tableConfig = {
-      'laboratory': { model: Laboratory, processor: processLaboratoryRow },
-      'vaccination': { model: Vaccination, processor: processVaccinationRow },
-      'parasite_control': { model: ParasiteControl, processor: processParasiteControlRow },
-      'mobile': { model: MobileClinic, processor: processMobileClinicRow },
-      'equine_health': { model: EquineHealth, processor: processEquineHealthRow }
-    };
-    
-    const config = tableConfig[tableType];
-    if (!config) {
-      return res.status(400).json({
-        success: false,
-        message: `نوع جدول غير مدعوم: ${tableType}`
-      });
-    }
-    
-    // Process rows using the appropriate processor
-    const results = [];
-    const errors = [];
-    
-    for (let i = 0; i < rows.length; i++) {
-      try {
-        const processedRow = await config.processor(rows[i], req.user._id, []);
-        if (processedRow) {
-          results.push(processedRow);
-        }
-      } catch (error) {
-        console.error(`❌ Error processing row ${i + 1}:`, error.message);
-        errors.push({
-          rowIndex: i + 1,
-          error: error.message,
-          data: rows[i]
-        });
-      }
-    }
-    
-    console.log(`✅ Successfully processed ${results.length} rows, ${errors.length} errors`);
-    
-    res.json({
-      success: true,
-      message: `تم استيراد ${results.length} سجل بنجاح`,
-      insertedCount: results.length,
-      errors: errors,
-      batchId: `dromo_${Date.now()}_${tableType}`
-    });
-    
-  } catch (error) {
-    console.error('❌ Dromo import error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'حدث خطأ أثناء الاستيراد',
-      error: error.message
-    });
-  }
+router.post('/mobile-clinics/import-dromo', auth, (req, res, next) => {
+  console.log('🎯 Dromo mobile clinics import route called');
+  handleImport(MobileClinic, processMobileClinicRow)(req, res, next);
+});
+
+router.post('/equine-health/import-dromo', auth, (req, res, next) => {
+  console.log('🎯 Dromo equine health import route called');
+  handleImport(EquineHealth, processEquineHealthRow)(req, res, next);
 });
 
 module.exports = router;

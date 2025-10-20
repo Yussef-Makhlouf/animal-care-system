@@ -27,9 +27,6 @@ const mongoose = require('mongoose');
  *         client:
  *           type: string
  *           description: Client ID reference
- *         farmLocation:
- *           type: string
- *           description: Location of the farm
  *         coordinates:
  *           type: object
  *           properties:
@@ -40,19 +37,12 @@ const mongoose = require('mongoose');
  *         supervisor:
  *           type: string
  *           description: Supervisor name
- *         team:
- *           type: string
- *           description: Team assigned for vaccination
  *         vehicleNo:
  *           type: string
  *           description: Vehicle number used
  *         vaccineType:
  *           type: string
  *           description: Type of vaccine used
- *         vaccineCategory:
- *           type: string
- *           enum: [Preventive, Emergency]
- *           description: Category of vaccination
  *         herdCounts:
  *           type: object
  *           properties:
@@ -90,7 +80,7 @@ const mongoose = require('mongoose');
  *               format: date
  *             situation:
  *               type: string
- *               enum: [Open, Closed, Pending]
+ *               enum: [Ongoing, Closed]
  *             fulfillingDate:
  *               type: string
  *               format: date
@@ -141,8 +131,8 @@ const requestSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Request situation is required'],
     enum: {
-      values: ['Open', 'Closed', 'Pending'],
-      message: 'Situation must be one of: Open, Closed, Pending'
+      values: ['Ongoing', 'Closed'],
+      message: 'Situation must be one of: Ongoing, Closed'
     }
   },
   fulfillingDate: {
@@ -166,18 +156,22 @@ const vaccinationSchema = new mongoose.Schema({
   },
   date: {
     type: Date,
-    required: [true, 'Date is required']
+    required: [true, 'Date is required'],
+    validate: {
+      validator: function(date) {
+        return date <= new Date();
+      },
+      message: 'Date cannot be in the future'
+    }
+  },
+  holdingCode: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HoldingCode'
   },
   client: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Client',
     required: [true, 'Client reference is required']
-  },
-  farmLocation: {
-    type: String,
-    required: [true, 'Farm location is required'],
-    trim: true,
-    maxlength: [200, 'Location cannot exceed 200 characters']
   },
   coordinates: {
     latitude: {
@@ -197,12 +191,6 @@ const vaccinationSchema = new mongoose.Schema({
     trim: true,
     maxlength: [100, 'Supervisor name cannot exceed 100 characters']
   },
-  team: {
-    type: String,
-    required: [true, 'Team is required'],
-    trim: true,
-    maxlength: [100, 'Team name cannot exceed 100 characters']
-  },
   vehicleNo: {
     type: String,
     required: [true, 'Vehicle number is required'],
@@ -215,14 +203,6 @@ const vaccinationSchema = new mongoose.Schema({
     trim: true,
     maxlength: [100, 'Vaccine type cannot exceed 100 characters']
   },
-  vaccineCategory: {
-    type: String,
-    required: [true, 'Vaccine category is required'],
-    enum: {
-      values: ['Preventive', 'Emergency'],
-      message: 'Vaccine category must be either Preventive or Emergency'
-    }
-  },
   herdCounts: {
     sheep: herdCountSchema,
     goats: herdCountSchema,
@@ -234,8 +214,8 @@ const vaccinationSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Herd health status is required'],
     enum: {
-      values: ['Healthy', 'Sick', 'Under Treatment'],
-      message: 'Health status must be one of: Healthy, Sick, Under Treatment'
+      values: ['Healthy', 'Sick', 'Sporadic Cases'],
+      message: 'Health status must be one of: Healthy, Sick, Sporadic Cases'
     }
   },
   animalsHandling: {
@@ -250,7 +230,7 @@ const vaccinationSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Labour availability is required'],
     enum: {
-      values: ['Available', 'Not Available'],
+      values: ['Available', 'Not Available' , 'Not Helpful'],
       message: 'Labour status must be either Available or Not Available'
     }
   },
@@ -258,7 +238,7 @@ const vaccinationSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Location reachability is required'],
     enum: {
-      values: ['Easy', 'Hard to reach'],
+      values: ['Easy', 'Hard to reach', 'Moderate'],
       message: 'Location reachability must be either Easy or Hard to reach'
     }
   },
@@ -292,7 +272,6 @@ vaccinationSchema.index({ date: -1 });
 vaccinationSchema.index({ client: 1 });
 vaccinationSchema.index({ supervisor: 1 });
 vaccinationSchema.index({ vaccineType: 1 });
-vaccinationSchema.index({ vaccineCategory: 1 });
 vaccinationSchema.index({ 'request.situation': 1 });
 vaccinationSchema.index({ herdHealth: 1 });
 vaccinationSchema.index({ 'coordinates.latitude': 1, 'coordinates.longitude': 1 });
@@ -374,12 +353,6 @@ vaccinationSchema.statics.getStatistics = async function(filters = {}) {
             ]
           }
         },
-        preventiveVaccinations: {
-          $sum: { $cond: [{ $eq: ['$vaccineCategory', 'Preventive'] }, 1, 0] }
-        },
-        emergencyVaccinations: {
-          $sum: { $cond: [{ $eq: ['$vaccineCategory', 'Emergency'] }, 1, 0] }
-        },
         healthyHerds: {
           $sum: { $cond: [{ $eq: ['$herdHealth', 'Healthy'] }, 1, 0] }
         },
@@ -395,8 +368,6 @@ vaccinationSchema.statics.getStatistics = async function(filters = {}) {
     totalRecords: 0,
     totalAnimals: 0,
     totalVaccinated: 0,
-    preventiveVaccinations: 0,
-    emergencyVaccinations: 0,
     healthyHerds: 0,
     sickHerds: 0
   };

@@ -117,7 +117,6 @@ router.get('/',
         { serialNo: { $regex: search, $options: 'i' } },
         { supervisor: { $regex: search, $options: 'i' } },
         { vehicleNo: { $regex: search, $options: 'i' } },
-        { herdLocation: { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -126,6 +125,7 @@ router.get('/',
     try {
       records = await ParasiteControl.find(filter)
         .populate('client', 'name nationalId phone village detailedAddress birthDate')
+        .populate('holdingCode', 'code village description isActive')
         .skip(skip)
         .limit(parseInt(limit))
         .sort({ date: -1 })
@@ -268,6 +268,7 @@ router.get('/export',
 
     const records = await ParasiteControl.find(filter)
       .populate('client', 'name nationalId phone village detailedAddress birthDate')
+      .populate('holdingCode', 'code village description isActive')
       .sort({ date: -1 });
 
     if (format === 'csv') {
@@ -290,6 +291,7 @@ router.get('/export',
           'ID': record.client?.nationalId || '',
           'Date of Birth': record.client?.birthDate ? record.client.birthDate.toISOString().split('T')[0] : '',
           'Phone': record.client?.phone || '',
+          'Holding Code': record.holdingCode?.code || '',
           'E': record.coordinates?.latitude || '',
           'N': record.coordinates?.longitude || '',
           'Supervisor': record.supervisor || '',
@@ -314,20 +316,18 @@ router.get('/export',
           'Total Young': totalYoung,
           'Total Female': totalFemale,
           'Total Treated': record.totalTreated || 0,
-          'Insecticide Used': record.insecticide?.type || '',
-          'Type': record.insecticide?.method || '',
-          'Volume (ml)': record.insecticide?.volumeMl || 0,
-          'Category': record.insecticide?.category || '',
+          'Insecticide Type': record.insecticide?.type || '',
+          'Insecticide Method': record.insecticide?.method || '',
+          'Insecticide Volume (ml)': record.insecticide?.volumeMl || 0,
           'Insecticide Status': record.insecticide?.status || '',
-          'Size (sqM)': record.animalBarnSizeSqM || 0,
-          'Insecticide': record.parasiteControlStatus || '',
-          'Volume': record.parasiteControlVolume || 0,
+          'Insecticide Category': record.insecticide?.category || '',
+          'Animal Barn Size (sqM)': record.animalBarnSizeSqM || 0,
+          'Breeding Sites': record.breedingSites || '',
           'Herd Health Status': record.herdHealthStatus || '',
-          'Complying to instructions': record.complyingToInstructions || 'Comply',
+          'Complying to Instructions': record.complyingToInstructions || 'Comply',
           'Request Date': record.request?.date ? record.request.date.toISOString().split('T')[0] : '',
           'Request Situation': record.request?.situation || '',
           'Request Fulfilling Date': record.request?.fulfillingDate ? record.request.fulfillingDate.toISOString().split('T')[0] : '',
-          'Category': record.insecticide?.category || '',
           'Remarks': record.remarks || ''
         };
       });
@@ -373,6 +373,7 @@ router.get('/:id',
   asyncHandler(async (req, res) => {
     const record = await ParasiteControl.findById(req.params.id)
       .populate('client', 'name nationalId phone village detailedAddress')
+      .populate('holdingCode', 'code village description isActive')
       .populate('createdBy', 'name email role')
       .populate('updatedBy', 'name email role');
 
@@ -491,14 +492,33 @@ router.post('/',
     
     console.log('🔍 Final clientId before saving:', clientId);
 
+    // Handle holding code - convert to ObjectId if provided
+    let holdingCodeId = null;
+    if (req.body.holdingCode && req.body.holdingCode.trim() !== '') {
+      const mongoose = require('mongoose');
+      if (mongoose.Types.ObjectId.isValid(req.body.holdingCode)) {
+        holdingCodeId = req.body.holdingCode;
+      } else {
+        // If it's a code string, find the holding code by code
+        const HoldingCode = require('../models/HoldingCode');
+        const holdingCode = await HoldingCode.findOne({ code: req.body.holdingCode.trim() });
+        if (holdingCode) {
+          holdingCodeId = holdingCode._id;
+        }
+      }
+    }
+    console.log('🔍 Holding code processing:', req.body.holdingCode, '→', holdingCodeId);
+
     const record = new ParasiteControl({
       ...req.body,
       client: clientId,
+      holdingCode: holdingCodeId,
       createdBy: req.user._id
     });
 
     await record.save();
     await record.populate('client', 'name nationalId phone village detailedAddress');
+    await record.populate('holdingCode', 'code village description isActive');
 
     res.status(201).json({
       success: true,
@@ -547,6 +567,18 @@ router.put('/:id',
   auth,
   validate(schemas.parasiteControlUpdate),
   asyncHandler(async (req, res) => {
+    console.log('🔄 PUT /parasite-control/:id - Update request received');
+    console.log('📋 Request params:', req.params);
+    console.log('📤 Request body:', JSON.stringify(req.body, null, 2));
+    console.log('👤 User:', req.user?.email);
+    console.log('🚨 HOLDING CODE DETAILED DEBUG:');
+    console.log('req.body.holdingCode:', req.body.holdingCode);
+    console.log('Type:', typeof req.body.holdingCode);
+    console.log('Is undefined?', req.body.holdingCode === undefined);
+    console.log('Is null?', req.body.holdingCode === null);
+    console.log('Is empty string?', req.body.holdingCode === '');
+    console.log('All body keys:', Object.keys(req.body));
+    
     const record = await ParasiteControl.findById(req.params.id);
     
     if (!record) {
@@ -635,11 +667,30 @@ router.put('/:id',
     
     console.log('🔍 PUT - Final clientId before updating:', clientId);
 
+    // Handle holding code - convert to ObjectId if provided
+    let holdingCodeId = null;
+    if (req.body.holdingCode && req.body.holdingCode !== null && req.body.holdingCode.trim() !== '') {
+      const mongoose = require('mongoose');
+      if (mongoose.Types.ObjectId.isValid(req.body.holdingCode)) {
+        holdingCodeId = req.body.holdingCode;
+      } else {
+        // If it's a code string, find the holding code by code
+        const HoldingCode = require('../models/HoldingCode');
+        const holdingCode = await HoldingCode.findOne({ code: req.body.holdingCode.trim() });
+        if (holdingCode) {
+          holdingCodeId = holdingCode._id;
+        }
+      }
+    }
+    console.log('🔍 PUT - Holding code processing:', req.body.holdingCode, '→', holdingCodeId);
+    updateData.holdingCode = holdingCodeId;
+
     // Update record
     Object.assign(record, updateData);
     record.updatedBy = req.user._id;
     await record.save();
     await record.populate('client', 'name nationalId phone village detailedAddress');
+    await record.populate('holdingCode', 'code village description isActive');
 
     res.json({
       success: true,
@@ -774,12 +825,33 @@ router.delete('/delete-all',
   auth,
   authorize('super_admin'),
   asyncHandler(async (req, res) => {
-    const result = await ParasiteControl.deleteMany({});
+    // Get all unique client IDs from parasite control records before deletion
+    const uniqueClientIds = await ParasiteControl.distinct('client');
+    console.log(`🔍 Found ${uniqueClientIds.length} unique client IDs in parasite control records`);
+    
+    // Delete all parasite control records
+    const parasiteResult = await ParasiteControl.deleteMany({});
+    console.log(`🗑️ Deleted ${parasiteResult.deletedCount} parasite control records`);
+    
+    // Delete associated clients (only those that were created from parasite control imports)
+    let clientsDeleted = 0;
+    if (uniqueClientIds.length > 0) {
+      const clientResult = await Client.deleteMany({ 
+        _id: { $in: uniqueClientIds.filter(id => id) } // Filter out null/undefined IDs
+      });
+      clientsDeleted = clientResult.deletedCount;
+      console.log(`🗑️ Deleted ${clientsDeleted} associated client records`);
+    }
     
     res.json({
       success: true,
-      message: `All parasite control records deleted successfully`,
-      deletedCount: result.deletedCount
+      message: `All parasite control records and associated clients deleted successfully`,
+      deletedCount: parasiteResult.deletedCount,
+      clientsDeleted: clientsDeleted,
+      details: {
+        parasiteControlRecords: parasiteResult.deletedCount,
+        clientRecords: clientsDeleted
+      }
     });
   })
 );
@@ -880,6 +952,7 @@ router.get('/template',
       'ID': '1234567890',
       'Date of Birth': '1980-01-01',
       'Phone': '+966501234567',
+      'Holding Code': 'HC123',
       'E': '24.7136',
       'N': '46.6753',
       'Supervisor': 'د. محمد علي',

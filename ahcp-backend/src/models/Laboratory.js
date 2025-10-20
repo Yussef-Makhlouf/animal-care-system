@@ -31,9 +31,6 @@ const mongoose = require('mongoose');
  *         client:
  *           type: string
  *           description: Client ID reference
- *         farmLocation:
- *           type: string
- *           description: Location where sample was collected
  *         coordinates:
  *           type: object
  *           properties:
@@ -130,9 +127,14 @@ const laboratorySchema = new mongoose.Schema({
     min: [0, 'Serial number cannot be negative'],
     unique: true 
   },
-  date: {
-    type: Date,
+  date: { 
+    type: Date, 
     required: [true, 'Date is required']
+    // Removed future date validation to allow flexible date entry
+  },
+  holdingCode: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HoldingCode'
   },
   sampleCode: { 
     type: String, 
@@ -160,13 +162,12 @@ const laboratorySchema = new mongoose.Schema({
     type: String, 
     required: [true, 'Client phone is required'], 
     trim: true, 
-    match: [/^\d{9}$/, 'Phone must be exactly 9 digits'] 
+    match: [/^\d{10}$/, 'Phone must be exactly 10 digits'] 
   },
-  farmLocation: { 
-    type: String, 
-    required: [true, 'Farm location is required'], 
-    trim: true, 
-    maxlength: [200, 'Location cannot exceed 200 characters'] 
+  client: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Client',
+    required: false // Optional since we have flat client fields
   },
   coordinates: { 
     latitude: { 
@@ -223,8 +224,8 @@ const laboratorySchema = new mongoose.Schema({
     type: String, 
     required: [true, 'Sample type is required'], 
     enum: { 
-      values: ['Blood', 'Serum', 'Urine', 'Feces', 'Milk', 'Tissue', 'Swab', 'Hair', 'Skin'], 
-      message: 'Invalid sample type' 
+      values: ['Serum', 'Whole Blood', 'Fecal Sample', 'Skin Scrape'], 
+      message: 'Invalid sample type. Must be one of: Serum, Whole Blood, Fecal Sample, Skin Scrape' 
     } 
   },
   sampleNumber: { 

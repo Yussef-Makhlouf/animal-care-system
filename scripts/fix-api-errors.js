@@ -7,7 +7,7 @@ async function fixAndTestAPIs() {
     // Get authentication token first
     let token = null;
     try {
-        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -57,7 +57,7 @@ async function fixAndTestAPIs() {
     for (const endpoint of endpoints) {
         try {
             // Try main endpoint first
-            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.url}`, { headers });
+            const response = await axios.get(`http://localhost:3001/api${endpoint.url}`, { headers });
             
             if (response.data.success || response.data.data) {
                 console.log(`✅ ${endpoint.name} - Working`);
@@ -77,7 +77,7 @@ async function fixAndTestAPIs() {
             // Try fallback endpoint
             try {
                 console.log(`   🔄 Trying fallback: ${endpoint.fallback}`);
-                const fallbackResponse = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint.fallback}`, { headers });
+                const fallbackResponse = await axios.get(`http://localhost:3001/api${endpoint.fallback}`, { headers });
                 
                 if (fallbackResponse.data.success) {
                     console.log(`   ✅ Fallback works - Records: ${fallbackResponse.data.total || fallbackResponse.data.data?.length || 0}`);
@@ -101,7 +101,7 @@ async function fixAndTestAPIs() {
 
     for (const endpoint of dataEndpoints) {
         try {
-            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${endpoint}?limit=1`, { headers });
+            const response = await axios.get(`http://localhost:3001/api${endpoint}?limit=1`, { headers });
             
             if (response.data.success) {
                 console.log(`✅ ${endpoint.replace('/', '').replace('-', ' ')} Data - OK`);

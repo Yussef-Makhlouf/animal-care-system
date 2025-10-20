@@ -7,7 +7,7 @@ async function checkDataValidity() {
     // Get authentication token first
     let token = null;
     try {
-        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         });
@@ -26,7 +26,7 @@ async function checkDataValidity() {
     // Check clients data for invalid dates
     console.log('\n📋 Checking Clients Data...');
     try {
-        const clientsResponse = await axios.get('https://ahcp-backend-production.up.railway.app/api/clients?limit=10', { headers });
+        const clientsResponse = await axios.get('http://localhost:3001/api/clients?limit=10', { headers });
         
         if (clientsResponse.data.success && clientsResponse.data.data) {
             const clients = clientsResponse.data.data;
@@ -85,7 +85,7 @@ async function checkDataValidity() {
     for (const dataType of dataTypes) {
         console.log(`\n📊 Checking ${dataType.name} Data...`);
         try {
-            const response = await axios.get(`https://ahcp-backend-production.up.railway.app/api${dataType.endpoint}?limit=3`, { headers });
+            const response = await axios.get(`http://localhost:3001/api${dataType.endpoint}?limit=3`, { headers });
             
             if (response.data.success && response.data.data) {
                 const records = response.data.data;

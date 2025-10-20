@@ -97,6 +97,7 @@ router.get('/',
     try {
       records = await Vaccination.find(filter)
         .populate('client', 'name nationalId phone village detailedAddress birthDate')
+        .populate('holdingCode', 'code village description isActive')
         .skip(skip)
         .limit(parseInt(limit))
         .sort({ date: -1 })
@@ -265,6 +266,7 @@ router.get('/export',
 
     const records = await Vaccination.find(filter)
       .populate('client', 'name nationalId phone village detailedAddress birthDate')
+      .populate('holdingCode', 'code village description isActive')
       .sort({ date: -1 });
 
     // Transform data for export
@@ -280,7 +282,7 @@ router.get('/export',
         'ID': record.client?.nationalId || '',
         'Birth Date': record.client?.birthDate ? record.client.birthDate.toISOString().split('T')[0] : '',
         'Phone': record.client?.phone || '',
-        'Location': record.farmLocation || '',
+        'Holding Code': record.holdingCode?.code || '',
         'N Coordinate': record.coordinates?.latitude || '',
         'E Coordinate': record.coordinates?.longitude || '',
         'Supervisor': record.supervisor || '',
@@ -375,6 +377,7 @@ router.get('/:id',
   asyncHandler(async (req, res) => {
     const record = await Vaccination.findById(req.params.id)
       .populate('client', 'name nationalId phone village detailedAddress')
+      .populate('holdingCode', 'code village description isActive')
       // .populate('createdBy', 'name email role')
       // .populate('updatedBy', 'name email role');
 
@@ -429,8 +432,50 @@ router.post('/',
 
     let clientId = req.body.client;
 
+    // Handle client object if provided
+    if (req.body.client && typeof req.body.client === 'object' && req.body.client._id) {
+      // Client object with _id provided - use the _id
+      clientId = req.body.client._id;
+    } else if (req.body.client && typeof req.body.client === 'object') {
+      // Client object without _id - treat as clientData
+      const clientData = req.body.client;
+      
+      // Try to find existing client by nationalId
+      let client = await Client.findOne({ nationalId: clientData.nationalId });
+      
+      if (!client) {
+        // Create new client
+        client = new Client({
+          name: clientData.name,
+          nationalId: clientData.nationalId,
+          phone: clientData.phone,
+          village: clientData.village || '',
+          detailedAddress: clientData.detailedAddress || '',
+          birthDate: clientData.birthDate || undefined,
+          status: 'نشط',
+          availableServices: ['vaccination'],
+          createdBy: req.user._id
+        });
+        await client.save();
+      } else {
+        // Update existing client with new data if provided
+        if (clientData.name) client.name = clientData.name;
+        if (clientData.phone) client.phone = clientData.phone;
+        if (clientData.village) client.village = clientData.village;
+        if (clientData.detailedAddress) client.detailedAddress = clientData.detailedAddress;
+        if (clientData.birthDate) client.birthDate = clientData.birthDate;
+        
+        // Add vaccination to available services if not already present
+        if (!client.availableServices.includes('vaccination')) {
+          client.availableServices.push('vaccination');
+        }
+        await client.save();
+      }
+      
+      clientId = client._id;
+    }
     // If clientData is provided, create or find the client
-    if (req.body.clientData) {
+    else if (req.body.clientData) {
       const clientData = req.body.clientData;
       
       // Try to find existing client by nationalId
@@ -477,6 +522,7 @@ router.post('/',
 
     await record.save();
     await record.populate('client', 'name nationalId phone village detailedAddress');
+    await record.populate('holdingCode', 'code village description isActive');
 
     res.status(201).json({
       success: true,
@@ -554,8 +600,50 @@ router.put('/:id',
 
     let clientId = req.body.client;
 
+    // Handle client object if provided
+    if (req.body.client && typeof req.body.client === 'object' && req.body.client._id) {
+      // Client object with _id provided - use the _id
+      clientId = req.body.client._id;
+    } else if (req.body.client && typeof req.body.client === 'object') {
+      // Client object without _id - treat as clientData
+      const clientData = req.body.client;
+      
+      // Try to find existing client by nationalId
+      let client = await Client.findOne({ nationalId: clientData.nationalId });
+      
+      if (!client) {
+        // Create new client
+        client = new Client({
+          name: clientData.name,
+          nationalId: clientData.nationalId,
+          phone: clientData.phone,
+          village: clientData.village || '',
+          detailedAddress: clientData.detailedAddress || '',
+          birthDate: clientData.birthDate || undefined,
+          status: 'نشط',
+          availableServices: ['vaccination'],
+          createdBy: req.user._id
+        });
+        await client.save();
+      } else {
+        // Update existing client with new data if provided
+        if (clientData.name) client.name = clientData.name;
+        if (clientData.phone) client.phone = clientData.phone;
+        if (clientData.village) client.village = clientData.village;
+        if (clientData.detailedAddress) client.detailedAddress = clientData.detailedAddress;
+        if (clientData.birthDate) client.birthDate = clientData.birthDate;
+        
+        // Add vaccination to available services if not already present
+        if (!client.availableServices.includes('vaccination')) {
+          client.availableServices.push('vaccination');
+        }
+        await client.save();
+      }
+      
+      clientId = client._id;
+    }
     // If clientData is provided, create or find the client
-    if (req.body.clientData) {
+    else if (req.body.clientData) {
       const clientData = req.body.clientData;
       
       // Try to find existing client by nationalId
@@ -601,6 +689,7 @@ router.put('/:id',
     record.updatedBy = req.user._id;
     await record.save();
     await record.populate('client', 'name nationalId phone village detailedAddress');
+    await record.populate('holdingCode', 'code village description isActive');
 
     res.json({
       success: true,
@@ -735,13 +824,32 @@ router.delete('/delete-all',
   auth,
   authorize('super_admin'),
   asyncHandler(async (req, res) => {
-    const result = await Vaccination.deleteMany({});
+    // Get all unique client IDs from vaccination records before deletion
+    const uniqueClientIds = await Vaccination.distinct('client');
+    console.log(`🔍 Found ${uniqueClientIds.length} unique client IDs in vaccination records`);
+    
+    // Delete all vaccination records
+    const vaccinationResult = await Vaccination.deleteMany({});
+    console.log(`🗑️ Deleted ${vaccinationResult.deletedCount} vaccination records`);
+    
+    // Delete associated clients (only those that were created from vaccination imports)
+    let clientsDeleted = 0;
+    if (uniqueClientIds.length > 0) {
+      const clientResult = await Client.deleteMany({ 
+        _id: { $in: uniqueClientIds.filter(id => id) } // Filter out null/undefined IDs
+      });
+      clientsDeleted = clientResult.deletedCount;
+      console.log(`🗑️ Deleted ${clientsDeleted} associated client records`);
+    }
     
     res.json({
       success: true,
-      message: `All vaccination records deleted successfully`,
-      data: {
-        deletedCount: result.deletedCount
+      message: `All vaccination records and associated clients deleted successfully`,
+      deletedCount: vaccinationResult.deletedCount,
+      clientsDeleted: clientsDeleted,
+      details: {
+        vaccinationRecords: vaccinationResult.deletedCount,
+        clientRecords: clientsDeleted
       }
     });
   })
@@ -868,7 +976,7 @@ router.get('/template',
       'Labours': 'Available',
       'Reachable Location': 'Easy',
       'Request Date': '2024-01-15',
-      'Situation': 'Open',
+      'Situation': 'Ongoing',
       'Request Fulfilling Date': '2024-01-16',
       'Vaccine': 'لقاح الحمى القلاعية',
       'Category': 'Preventive',

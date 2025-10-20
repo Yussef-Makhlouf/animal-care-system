@@ -73,9 +73,9 @@ npm run start-prod
 ## الروابط
 
 - **الواجهة الأمامية**: http://localhost:3000
-- **الخادم الخلفي**: https://ahcp-backend-production.up.railway.app
-- **توثيق API**: https://ahcp-backend-production.up.railway.app/api-docs
-- **فحص الصحة**: https://ahcp-backend-production.up.railway.app/health
+- **الخادم الخلفي**: http://localhost:3001
+- **توثيق API**: http://localhost:3001/api-docs
+- **فحص الصحة**: http://localhost:3001/health
 
 ## هيكل المشروع
 

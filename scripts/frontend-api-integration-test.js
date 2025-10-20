@@ -2,7 +2,7 @@ const axios = require('axios');
 
 // إعدادات الاختبار
 const FRONTEND_URL = 'http://localhost:3000';
-const BACKEND_URL = 'https://ahcp-backend-production.up.railway.app/api';
+const BACKEND_URL = 'http://localhost:3001/api';
 const TIMEOUT = 15000;
 
 // ألوان للطباعة

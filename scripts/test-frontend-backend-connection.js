@@ -6,7 +6,7 @@ async function testConnection() {
     // Test 1: Health Check
     try {
         console.log('1️⃣ Testing Health Check...');
-        const healthResponse = await axios.get('https://ahcp-backend-production.up.railway.app/health');
+        const healthResponse = await axios.get('http://localhost:3001/health');
         console.log('✅ Health Check: OK');
         console.log(`   Status: ${healthResponse.data.status}`);
         console.log(`   Environment: ${healthResponse.data.environment}`);
@@ -19,7 +19,7 @@ async function testConnection() {
     // Test 2: CORS Preflight
     try {
         console.log('\n2️⃣ Testing CORS Preflight...');
-        const corsResponse = await axios.options('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const corsResponse = await axios.options('http://localhost:3001/api/auth/login', {
             headers: {
                 'Origin': 'http://localhost:3000',
                 'Access-Control-Request-Method': 'POST',
@@ -35,7 +35,7 @@ async function testConnection() {
     // Test 3: Login API
     try {
         console.log('\n3️⃣ Testing Login API...');
-        const loginResponse = await axios.post('https://ahcp-backend-production.up.railway.app/api/auth/login', {
+        const loginResponse = await axios.post('http://localhost:3001/api/auth/login', {
             email: 'admin@ahcp.gov.sa',
             password: 'Admin@123456'
         }, {
@@ -68,21 +68,21 @@ async function testConnection() {
 
     // Test 4: Frontend API Base URL
     console.log('\n4️⃣ Checking Frontend API Configuration...');
-    const frontendApiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ahcp-backend-production.up.railway.app/api';
+    const frontendApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
     console.log(`   Frontend API URL: ${frontendApiUrl}`);
     
     if (frontendApiUrl.includes('localhost:3001')) {
         console.log('✅ Frontend API URL: Correct');
     } else {
         console.log('❌ Frontend API URL: Incorrect');
-        console.log('   Expected: https://ahcp-backend-production.up.railway.app/api');
+        console.log('   Expected: http://localhost:3001/api');
     }
 
     console.log('\n🎯 Troubleshooting Steps:');
     console.log('1. Make sure backend is running on port 3001');
     console.log('2. Make sure frontend is running on port 3000');
     console.log('3. Check browser console for CORS errors');
-    console.log('4. Try opening: https://ahcp-backend-production.up.railway.app/health');
+    console.log('4. Try opening: http://localhost:3001/health');
     console.log('5. Try the debug login page: debug-login.html');
     
     console.log('\n📋 Working Credentials:');
