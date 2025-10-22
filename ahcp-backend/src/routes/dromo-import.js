@@ -9,8 +9,109 @@ const ParasiteControl = require('../models/ParasiteControl');
 const MobileClinic = require('../models/MobileClinic');
 const Laboratory = require('../models/Laboratory');
 const EquineHealth = require('../models/EquineHealth');
+const HoldingCode = require('../models/HoldingCode');
 
 const router = express.Router();
+
+/**
+ * Smart holding code handler - finds existing or creates new holding code
+ * Enhanced to handle duplicate codes across different villages
+ */
+const findOrCreateHoldingCode = async (holdingCodeValue, village, userId) => {
+  try {
+    if (!holdingCodeValue || !village) {
+      console.log('⚠️ No holding code or village provided, skipping holding code creation');
+      return null;
+    }
+
+    const codeValue = holdingCodeValue.toString().trim();
+    const villageValue = village.toString().trim();
+
+    // First, try to find existing holding code by code
+    let holdingCode = await HoldingCode.findOne({ 
+      code: codeValue,
+      isActive: true 
+    });
+
+    if (holdingCode) {
+      console.log(`✅ Found existing holding code: ${holdingCode.code} for village: ${holdingCode.village}`);
+      return holdingCode._id;
+    }
+
+    // If not found by code, try to find by village (since village should be unique)
+    holdingCode = await HoldingCode.findOne({ 
+      village: villageValue,
+      isActive: true 
+    });
+
+    if (holdingCode) {
+      console.log(`✅ Found existing holding code by village: ${holdingCode.code} for village: ${holdingCode.village}`);
+      return holdingCode._id;
+    }
+
+    // Check if the same code exists for a different village
+    const existingCodeForDifferentVillage = await HoldingCode.findOne({ 
+      code: codeValue,
+      village: { $ne: villageValue },
+      isActive: true 
+    });
+
+    if (existingCodeForDifferentVillage) {
+      console.log(`⚠️ Code ${codeValue} already exists for village ${existingCodeForDifferentVillage.village}, cannot create for ${villageValue}`);
+      console.log(`🔄 Using existing holding code: ${existingCodeForDifferentVillage.code} for village: ${existingCodeForDifferentVillage.village}`);
+      return existingCodeForDifferentVillage._id;
+    }
+
+    // If no holding code exists, create a new one
+    console.log(`🔄 Creating new holding code: ${codeValue} for village: ${villageValue}`);
+    
+    const newHoldingCode = new HoldingCode({
+      code: codeValue,
+      village: villageValue,
+      description: `Auto-created during import for village ${villageValue}`,
+      isActive: true,
+      createdBy: userId
+    });
+
+    await newHoldingCode.save();
+    console.log(`✅ Created new holding code: ${newHoldingCode.code} (ID: ${newHoldingCode._id})`);
+    return newHoldingCode._id;
+
+  } catch (error) {
+    console.error('❌ Error in findOrCreateHoldingCode:', error);
+    
+    // If it's a duplicate error, try to find the existing one
+    if (error.code === 11000 || error.code === 'DUPLICATE_HOLDING_CODE' || error.code === 'DUPLICATE_VILLAGE_HOLDING_CODE') {
+      console.log('🔄 Duplicate detected, trying to find existing holding code...');
+      
+      // Try to find by code first
+      let existingCode = await HoldingCode.findOne({ 
+        code: holdingCodeValue.toString().trim(),
+        isActive: true 
+      });
+      
+      if (existingCode) {
+        console.log(`✅ Found existing holding code after duplicate error: ${existingCode.code}`);
+        return existingCode._id;
+      }
+      
+      // Try to find by village
+      existingCode = await HoldingCode.findOne({ 
+        village: village.toString().trim(),
+        isActive: true 
+      });
+      
+      if (existingCode) {
+        console.log(`✅ Found existing holding code by village after duplicate error: ${existingCode.code}`);
+        return existingCode._id;
+      }
+    }
+    
+    // If all fails, return null and continue without holding code
+    console.warn(`⚠️ Could not create or find holding code ${holdingCodeValue} for village ${village}, continuing without it`);
+    return null;
+  }
+};
 
 /**
  * Simple client creator - handles both old format and new mapped format
@@ -21,16 +122,51 @@ const createSimpleClient = async (clientData, userId) => {
     const name = clientData.name || `مربي ${clientData.farmLocation || clientData.serialNo || 'غير محدد'}`;
     const nationalId = clientData.nationalId || `${Date.now()}`.substring(0, 10).padStart(10, '1');
     const phone = clientData.phone || `5${Math.floor(Math.random() * 100000000)}`.substring(0, 9);
-    const village = clientData.village || clientData.farmLocation || 'غير محدد';
+    const villageName = clientData.village || clientData.farmLocation || 'غير محدد';
     const detailedAddress = clientData.detailedAddress || clientData.farmLocation || 'غير محدد';
+    
+    // Handle village intelligently
+    let villageId = null;
+    if (villageName && villageName !== 'غير محدد') {
+      console.log(`🔄 Processing village: ${villageName}`);
+      // Import Village model
+      const Village = require('../models/Village');
+      
+      // Find or create village
+      let village = await Village.findOne({
+        $or: [
+          { nameArabic: villageName.trim() },
+          { nameEnglish: villageName.trim() }
+        ]
+      });
+
+      if (!village) {
+        console.log(`🔄 Creating new village: ${villageName}`);
+        village = new Village({
+          serialNumber: `AUTO${Date.now().toString().slice(-6)}`,
+          sector: 'Unknown Sector',
+          nameArabic: villageName.trim(),
+          nameEnglish: villageName.trim(),
+          createdBy: userId
+        });
+        await village.save();
+      }
+      villageId = village._id;
+    }
+    
+    // Handle holding code intelligently
+    let holdingCodeId = null;
+    if (clientData.holdingCode && clientData.holdingCode.trim() !== '') {
+      console.log(`🔄 Processing holding code: ${clientData.holdingCode} for village: ${villageName}`);
+      holdingCodeId = await findOrCreateHoldingCode(clientData.holdingCode, villageName, userId);
+    }
     
     // Try to find existing client first
     let client = await Client.findOne({ 
       $or: [
         { name: name },
         { nationalId: nationalId },
-        { phone: phone },
-        { village: village }
+        { phone: phone }
       ]
     });
     
@@ -40,17 +176,24 @@ const createSimpleClient = async (clientData, userId) => {
         nationalId: nationalId,
         phone: phone,
         birthDate: clientData.birthDate || null,
-        village: village,
+        village: villageId, // Use village ObjectId instead of string
         detailedAddress: detailedAddress,
-        holdingCode: clientData.holdingCode || '',
+        holdingCode: holdingCodeId, // Use ObjectId or null
         status: 'نشط',
         createdBy: userId
       });
       
       await client.save();
-      console.log(`✅ Created new client: ${client.name} (ID: ${client.nationalId})`);
+      console.log(`✅ Created new client: ${client.name} (ID: ${client.nationalId}) with holding code: ${holdingCodeId || 'none'}`);
     } else {
-      console.log(`✅ Found existing client: ${client.name} (ID: ${client.nationalId})`);
+      // Update existing client with holding code if provided and not already set
+      if (holdingCodeId && !client.holdingCode) {
+        client.holdingCode = holdingCodeId;
+        await client.save();
+        console.log(`✅ Updated existing client ${client.name} with holding code: ${holdingCodeId}`);
+      } else {
+        console.log(`✅ Found existing client: ${client.name} (ID: ${client.nationalId}) with existing holding code: ${client.holdingCode || 'none'}`);
+      }
     }
     
     return client;
@@ -157,7 +300,7 @@ const mapDromoToVaccination = (row) => {
       birthDate: parseSimpleDate(row.birthDate),
       village: row.location || row.farmLocation || 'غير محدد',
       detailedAddress: row.location || row.farmLocation || 'غير محدد',
-      holdingCode: row.holdingCode || ''
+      holdingCode: row.holdingCode || '' // Keep as string, will be processed by findOrCreateHoldingCode
     },
     
     // Location and coordinates
