@@ -6,6 +6,8 @@ const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { checkSectionAccessWithMessage } = require('../middleware/sectionAuth');
 const { findOrCreateClient, parseFileData } = require('../utils/importExportHelpers');
+const queryLogger = require('../utils/queryLogger');
+const filterBuilder = require('../utils/filterBuilder');
 
 const router = express.Router();
 
@@ -50,65 +52,113 @@ router.get('/',
   auth,
   validateQuery(schemas.dateRangeQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 30, startDate, endDate, interventionCategory, followUpRequired, supervisor, search } = req.query;
-    const skip = (page - 1) * limit;
+    const startTime = Date.now();
+    
+    console.log('🔍 MobileClinic Backend - Received query params:', req.query);
+    
+    // Build advanced filter using FilterBuilder
+    const filter = filterBuilder.buildMobileClinicFilter(req.query);
+    const paginationParams = filterBuilder.buildPaginationParams(req.query);
+    const sortParams = filterBuilder.buildSortParams(req.query);
 
-    // Build filter
-    const filter = {};
-    if (startDate && endDate) {
-      filter.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-    if (interventionCategory) filter.interventionCategory = interventionCategory;
-    if (followUpRequired !== undefined) filter.followUpRequired = followUpRequired === 'true';
-    if (supervisor) filter.supervisor = { $regex: supervisor, $options: 'i' };
-    if (search) {
-      filter.$or = [
-        { serialNo: { $regex: search, $options: 'i' } },
-        { supervisor: { $regex: search, $options: 'i' } },
-        { vehicleNo: { $regex: search, $options: 'i' } },
-        { diagnosis: { $regex: search, $options: 'i' } }
-      ];
-    }
+    console.log('📋 Built mobile clinic filter object:', JSON.stringify(filter, null, 2));
+    console.log('📄 Pagination params:', paginationParams);
 
-    // Get records with error handling
-    let records;
+    // Execute query with performance tracking
+    const queryStartTime = Date.now();
+    
+    let records, total;
     try {
-      records = await MobileClinic.find(filter)
-        .populate({
-          path: 'client',
-          select: 'name nationalId phone village detailedAddress birthDate',
-          populate: {
-            path: 'village',
-            select: 'nameArabic nameEnglish sector serialNumber'
-          }
-        })
-        .populate('holdingCode', 'code village description isActive')
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean(); // Use lean() for better performance
+      // Execute both queries in parallel for better performance
+      [records, total] = await Promise.all([
+        MobileClinic.find(filter)
+          .populate({
+            path: 'client',
+            select: 'name nationalId phone village detailedAddress birthDate',
+            populate: {
+              path: 'village',
+              select: 'nameArabic nameEnglish sector serialNumber'
+            }
+          })
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(), // Use lean() for better performance
+        MobileClinic.countDocuments(filter)
+      ]);
     } catch (populateError) {
-      console.error('Populate error, falling back to basic query:', populateError);
-      // Fallback without populate if there's an issue
-      records = await MobileClinic.find(filter)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean();
+      console.error('🚨 MobileClinic populate error, falling back to basic query:', populateError);
+      // Fallback with basic populate if there's an issue
+      [records, total] = await Promise.all([
+        MobileClinic.find(filter)
+          .populate('client', 'name nationalId phone village detailedAddress birthDate')
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(),
+        MobileClinic.countDocuments(filter)
+      ]);
     }
 
-    const total = await MobileClinic.countDocuments(filter);
+    // Ensure records is always an array
+    if (!records) {
+      records = [];
+    }
+
+    const queryExecutionTime = Date.now() - queryStartTime;
+    const totalExecutionTime = Date.now() - startTime;
+
+    // Log performance with detailed metrics
+    queryLogger.log(
+      'MobileClinic Query',
+      filter,
+      queryExecutionTime,
+      records.length,
+      {
+        totalRecords: total,
+        pagination: paginationParams,
+        totalExecutionTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length,
+        hasPopulation: true
+      }
+    );
+
+    // Get query explanation for development environment
+    if (process.env.NODE_ENV === 'development' && Object.keys(filter).length > 0) {
+      try {
+        const explanation = await queryLogger.explainQuery(MobileClinic, filter);
+        if (explanation) {
+          console.log('🔍 MobileClinic Query Performance Analysis:', {
+            indexesUsed: explanation.indexesUsed,
+            documentsExamined: explanation.documentsExamined,
+            keysExamined: explanation.keysExamined,
+            efficiency: explanation.keysExamined > 0 ? 
+              (explanation.documentsExamined / explanation.keysExamined).toFixed(2) : 'N/A'
+          });
+        }
+      } catch (explainError) {
+        console.warn('⚠️ Could not explain mobile clinic query:', explainError.message);
+      }
+    }
+
+    console.log(`📊 MobileClinic query results: Found ${records.length} records out of ${total} total matching filter`);
 
     res.json({
       success: true,
       data: records,
       total: total,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalPages: Math.ceil(total / limit)
+      page: paginationParams.page,
+      limit: paginationParams.limit,
+      totalPages: Math.ceil(total / paginationParams.limit),
+      hasNextPage: paginationParams.page < Math.ceil(total / paginationParams.limit),
+      hasPrevPage: paginationParams.page > 1,
+      performance: {
+        queryTime: `${queryExecutionTime}ms`,
+        totalTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length
+      }
     });
   })
 );
@@ -294,9 +344,13 @@ router.post('/',
       };
 
       // Add client reference or flat client data
-      if (clientData && clientData._id) {
+      if (req.body.client && typeof req.body.client === 'string') {
+        // Client ID provided directly
+        mobileClinicData.client = req.body.client;
+      } else if (clientData && clientData._id) {
+        // Client object from findOrCreateClient
         mobileClinicData.client = clientData._id;
-      } else {
+      } else if (req.body.clientName && req.body.clientId) {
         // Use flat structure for client data
         mobileClinicData.clientName = req.body.clientName;
         mobileClinicData.clientId = req.body.clientId;
@@ -326,6 +380,14 @@ router.post('/',
       // Add holding code to mobile clinic data
       mobileClinicData.holdingCode = holdingCodeId;
 
+      console.log('✅ Client data processed:', {
+        hasClientReference: !!mobileClinicData.client,
+        hasFlatFields: !!(mobileClinicData.clientName && mobileClinicData.clientId),
+        clientReference: mobileClinicData.client,
+        flatClientName: mobileClinicData.clientName,
+        flatClientId: mobileClinicData.clientId
+      });
+
       console.log('💾 Saving mobile clinic data:', mobileClinicData);
 
       // Create the mobile clinic record
@@ -348,14 +410,25 @@ router.post('/',
       
       // Handle validation errors
       if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(error.errors).map(err => ({
-          field: err.path,
-          message: err.message
-        }));
+        let validationErrors = [];
+        
+        // Handle different validation error formats
+        if (error.errors && typeof error.errors === 'object') {
+          validationErrors = Object.values(error.errors).map(err => ({
+            field: err.path,
+            message: err.message
+          }));
+        } else if (error.message) {
+          // Handle custom validation errors (like from pre-save middleware)
+          validationErrors = [{
+            field: 'general',
+            message: error.message
+          }];
+        }
         
         return res.status(400).json({
           success: false,
-          message: 'Validation error',
+          message: error.message || 'Validation error',
           errors: validationErrors
         });
       }
@@ -588,44 +661,89 @@ router.get('/export',
       .populate('holdingCode', 'code village description isActive')
       .sort({ date: -1 });
 
-    // Transform data for export
+    // Transform data for export to match table columns exactly
     const transformedRecords = records.map(record => {
-      // تحويل animalCounts إلى object بسيط
       const animalCounts = record.animalCounts || {};
       
-      // تحويل client إلى object بسيط
-      const client = record.client || {};
+      // Handle client data (both flat and nested structures)
+      const clientName = record.clientName || record.client?.name || '';
+      const clientId = record.clientId || record.client?.nationalId || '';
+      const clientPhone = record.clientPhone || record.client?.phone || '';
+      const clientBirthDate = record.clientBirthDate || record.client?.birthDate;
       
-      // تحويل coordinates إلى object بسيط
-      const coordinates = record.coordinates || {};
+      // Handle village from client or fallback
+      let village = 'غير محدد';
+      if (record.client && typeof record.client === 'object' && record.client.village) {
+        if (typeof record.client.village === 'string') {
+          village = record.client.village;
+        } else if (record.client.village.nameArabic || record.client.village.nameEnglish) {
+          village = record.client.village.nameArabic || record.client.village.nameEnglish;
+        }
+      } else if (record.clientVillage) {
+        village = record.clientVillage;
+      } else if (record.holdingCode && typeof record.holdingCode === 'object' && record.holdingCode.village) {
+        village = record.holdingCode.village;
+      }
       
-      // تحويل request إلى object بسيط
-      const request = record.request || {};
+      // Calculate total animals
+      const totalAnimals = (animalCounts.sheep || 0) + (animalCounts.goats || 0) + 
+                          (animalCounts.camel || 0) + (animalCounts.horse || 0) + (animalCounts.cattle || 0);
       
       return {
         'Serial No': record.serialNo || '',
         'Date': record.date ? record.date.toISOString().split('T')[0] : '',
-        'Name': client.name || '',
-        'ID': client.nationalId || '',
-        'Birth Date': client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : '',
-        'Phone': client.phone || '',
-        'Holding Code': record.holdingCode?.code || '',
-        'N Coordinate': coordinates.latitude || '',
-        'E Coordinate': coordinates.longitude || '',
+        'Client Name': clientName,
+        'Client ID': clientId,
+        'Client Birth Date': clientBirthDate ? new Date(clientBirthDate).toISOString().split('T')[0] : '',
+        'Client Phone': clientPhone,
+        'Village': village,
+        'N Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.latitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.latitude || '';
+          }
+          return '';
+        })(),
+        'E Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.longitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.longitude || '';
+          }
+          return '';
+        })(),
         'Supervisor': record.supervisor || '',
-        'Vehicle No.': record.vehicleNo || '',
-        'Sheep': animalCounts.sheep || 0,
-        'Goats': animalCounts.goats || 0,
-        'Camel': animalCounts.camel || 0,
-        'Horse': animalCounts.horse || 0,
-        'Cattle': animalCounts.cattle || 0,
+        'Vehicle No': record.vehicleNo || '',
+        'Holding Code': record.holdingCode?.code || '',
+        'Holding Code Village': record.holdingCode?.village || '',
+        'Sheep Count': animalCounts.sheep || 0,
+        'Goats Count': animalCounts.goats || 0,
+        'Camel Count': animalCounts.camel || 0,
+        'Horse Count': animalCounts.horse || 0,
+        'Cattle Count': animalCounts.cattle || 0,
+        'Total Animals': totalAnimals,
         'Diagnosis': record.diagnosis || '',
         'Intervention Category': record.interventionCategory || '',
         'Treatment': record.treatment || '',
-        'Request Date': request.date ? new Date(request.date).toISOString().split('T')[0] : '',
-        'Request Status': request.situation || '',
-        'Request Fulfilling Date': request.fulfillingDate ? new Date(request.fulfillingDate).toISOString().split('T')[0] : '',
-        'Category': record.category || '',
+        'Medications Used': record.medicationsUsed || '',
+        'Follow Up Required': record.followUpRequired ? 'Yes' : 'No',
+        'Follow Up Date': record.followUpDate ? new Date(record.followUpDate).toISOString().split('T')[0] : '',
+        'Request Date': record.request?.date ? record.request.date.toISOString().split('T')[0] : '',
+        'Request Situation': record.request?.situation || '',
+        'Request Fulfilling Date': record.request?.fulfillingDate ? record.request.fulfillingDate.toISOString().split('T')[0] : '',
         'Remarks': record.remarks || ''
       };
     });
@@ -665,104 +783,7 @@ router.get('/export',
   })
 );
 
-// Specific routes must come before parameterized routes
-// Export route
-router.get('/export',
-  asyncHandler(async (req, res) => {
-    // Add default user for export
-    req.user = { _id: 'system', role: 'super_admin', name: 'System Export' };
-    const { format = 'json', interventionCategory, startDate, endDate } = req.query;
-    
-    const filter = {};
-    if (interventionCategory) filter.interventionCategory = interventionCategory;
-    if (startDate && endDate) {
-      filter.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-
-    const records = await MobileClinic.find(filter)
-      .populate('client', 'name nationalId phone village detailedAddress birthDate')
-      .populate('holdingCode', 'code village description isActive')
-      .sort({ date: -1 });
-
-    // Transform data for export
-    const transformedRecords = records.map(record => {
-      // تحويل animalCounts إلى object بسيط
-      const animalCounts = record.animalCounts || {};
-      
-      // تحويل client إلى object بسيط
-      const client = record.client || {};
-      
-      // تحويل coordinates إلى object بسيط
-      const coordinates = record.coordinates || {};
-      
-      // تحويل request إلى object بسيط
-      const request = record.request || {};
-      
-      return {
-        'Serial No': record.serialNo || '',
-        'Date': record.date ? record.date.toISOString().split('T')[0] : '',
-        'Name': client.name || '',
-        'ID': client.nationalId || '',
-        'Birth Date': client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : '',
-        'Phone': client.phone || '',
-        'Holding Code': record.holdingCode?.code || '',
-        'N Coordinate': coordinates.latitude || '',
-        'E Coordinate': coordinates.longitude || '',
-        'Supervisor': record.supervisor || '',
-        'Vehicle No.': record.vehicleNo || '',
-        'Sheep': animalCounts.sheep || 0,
-        'Goats': animalCounts.goats || 0,
-        'Camel': animalCounts.camel || 0,
-        'Horse': animalCounts.horse || 0,
-        'Cattle': animalCounts.cattle || 0,
-        'Diagnosis': record.diagnosis || '',
-        'Intervention Category': record.interventionCategory || '',
-        'Treatment': record.treatment || '',
-        'Request Date': request.date ? new Date(request.date).toISOString().split('T')[0] : '',
-        'Request Status': request.situation || '',
-        'Request Fulfilling Date': request.fulfillingDate ? new Date(request.fulfillingDate).toISOString().split('T')[0] : '',
-        'Category': record.category || '',
-        'Remarks': record.remarks || ''
-      };
-    });
-
-    if (format === 'csv') {
-      const { Parser } = require('json2csv');
-      const parser = new Parser();
-      const csv = parser.parse(transformedRecords);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=mobile-clinics.csv');
-      res.send(csv);
-    } else if (format === 'excel') {
-      const XLSX = require('xlsx');
-      
-      // Create a new workbook
-      const workbook = XLSX.utils.book_new();
-      
-      // Convert data to worksheet
-      const worksheet = XLSX.utils.json_to_sheet(transformedRecords);
-      
-      // Add worksheet to workbook
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Mobile Clinics');
-      
-      // Generate Excel file buffer
-      const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-      
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=mobile-clinics.xlsx');
-      res.send(excelBuffer);
-    } else {
-      res.json({
-        success: true,
-        data: records
-      });
-    }
-  })
-);
+// Removed duplicate export route - using the first one above
 
 // Template route
 router.get('/template',
@@ -841,7 +862,7 @@ router.get('/template',
  */
 router.delete('/bulk-delete',
   auth,
-  authorize(['super_admin', 'admin']),
+  authorize('super_admin', 'admin', 'section_supervisor'),
   validate(schemas.bulkDeleteSchema),
   asyncHandler(async (req, res) => {
     const { ids } = req.body;
@@ -901,7 +922,7 @@ router.delete('/bulk-delete',
  */
 router.delete('/delete-all',
   auth,
-  authorize(['super_admin']),
+  authorize('super_admin'),
   asyncHandler(async (req, res) => {
     try {
       // Get all unique client IDs from mobile clinic records before deletion
@@ -1250,14 +1271,25 @@ router.put('/:id',
       
       // Handle validation errors
       if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(error.errors).map(err => ({
-          field: err.path,
-          message: err.message
-        }));
+        let validationErrors = [];
+        
+        // Handle different validation error formats
+        if (error.errors && typeof error.errors === 'object') {
+          validationErrors = Object.values(error.errors).map(err => ({
+            field: err.path,
+            message: err.message
+          }));
+        } else if (error.message) {
+          // Handle custom validation errors (like from pre-save middleware)
+          validationErrors = [{
+            field: 'general',
+            message: error.message
+          }];
+        }
         
         return res.status(400).json({
           success: false,
-          message: 'Validation error',
+          message: error.message || 'Validation error',
           errors: validationErrors
         });
       }
@@ -1306,7 +1338,7 @@ router.put('/:id',
  */
 router.delete('/:id',
   auth,
-  authorize(['super_admin', 'admin']),
+  authorize('super_admin', 'admin'),
   asyncHandler(async (req, res) => {
     try {
       const record = await MobileClinic.findById(req.params.id);

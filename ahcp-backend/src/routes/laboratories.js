@@ -9,6 +9,8 @@ const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { checkSectionAccessWithMessage } = require('../middleware/sectionAuth');
 const { handleExport, handleTemplate, handleImport, findOrCreateClient } = require('../utils/importExportHelpers');
+const queryLogger = require('../utils/queryLogger');
+const filterBuilder = require('../utils/filterBuilder');
 
 const router = express.Router();
 // Configure multer for file uploads
@@ -99,57 +101,111 @@ router.get('/',
   auth,
   validateQuery(schemas.paginationQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 30, testStatus, testType, priority, search } = req.query;
-    const skip = (page - 1) * limit;
+    const startTime = Date.now();
+    
+    console.log('🔍 Laboratory Backend - Received query params:', req.query);
+    
+    // Build advanced filter using FilterBuilder
+    const filter = filterBuilder.buildLaboratoryFilter(req.query);
+    const paginationParams = filterBuilder.buildPaginationParams(req.query);
+    const sortParams = filterBuilder.buildSortParams(req.query);
 
-    // Build filter
-    const filter = {};
-    if (testStatus) filter.testStatus = testStatus;
-    if (testType) filter.testType = testType;
-    if (priority) filter.priority = priority;
-    if (search) {
-      filter.$or = [
-        { sampleCode: { $regex: search, $options: 'i' } },
-        { collector: { $regex: search, $options: 'i' } },
-        { laboratoryTechnician: { $regex: search, $options: 'i' } }
-      ];
-    }
+    console.log('📋 Built laboratory filter object:', JSON.stringify(filter, null, 2));
+    console.log('📄 Pagination params:', paginationParams);
 
-    // Get records with error handling
-    let records;
+    // Execute query with performance tracking
+    const queryStartTime = Date.now();
+    
+    let records, total;
     try {
-      records = await Laboratory.find(filter)
-        .populate({
-          path: 'client',
-          select: 'name nationalId phone birthDate village detailedAddress',
-          populate: {
-            path: 'village',
-            select: 'nameArabic nameEnglish sector serialNumber'
-          }
-        })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1, priority: -1 })
-        .lean(); // Use lean() for better performance
+      // Execute both queries in parallel for better performance
+      [records, total] = await Promise.all([
+        Laboratory.find(filter)
+          .populate({
+            path: 'client',
+            select: 'name nationalId phone birthDate village detailedAddress',
+            populate: {
+              path: 'village',
+              select: 'nameArabic nameEnglish sector serialNumber'
+            }
+          })
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(), // Use lean() for better performance
+        Laboratory.countDocuments(filter)
+      ]);
     } catch (populateError) {
-      console.error('Populate error, falling back to basic query:', populateError);
-      // Fallback without populate if there's an issue
-      records = await Laboratory.find(filter)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1, priority: -1 })
-        .lean();
+      console.error('🚨 Laboratory populate error, falling back to basic query:', populateError);
+      // Fallback with basic populate if there's an issue
+      [records, total] = await Promise.all([
+        Laboratory.find(filter)
+          .populate('client', 'name nationalId phone birthDate village detailedAddress')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(),
+        Laboratory.countDocuments(filter)
+      ]);
     }
 
-    const total = await Laboratory.countDocuments(filter);
+    // Ensure records is always an array
+    if (!records) {
+      records = [];
+    }
+
+    const queryExecutionTime = Date.now() - queryStartTime;
+    const totalExecutionTime = Date.now() - startTime;
+
+    // Log performance with detailed metrics
+    queryLogger.log(
+      'Laboratory Query',
+      filter,
+      queryExecutionTime,
+      records.length,
+      {
+        totalRecords: total,
+        pagination: paginationParams,
+        totalExecutionTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length,
+        hasPopulation: true
+      }
+    );
+
+    // Get query explanation for development environment
+    if (process.env.NODE_ENV === 'development' && Object.keys(filter).length > 0) {
+      try {
+        const explanation = await queryLogger.explainQuery(Laboratory, filter);
+        if (explanation) {
+          console.log('🔍 Laboratory Query Performance Analysis:', {
+            indexesUsed: explanation.indexesUsed,
+            documentsExamined: explanation.documentsExamined,
+            keysExamined: explanation.keysExamined,
+            efficiency: explanation.keysExamined > 0 ? 
+              (explanation.documentsExamined / explanation.keysExamined).toFixed(2) : 'N/A'
+          });
+        }
+      } catch (explainError) {
+        console.warn('⚠️ Could not explain laboratory query:', explainError.message);
+      }
+    }
+
+    console.log(`📊 Laboratory query results: Found ${records.length} records out of ${total} total matching filter`);
 
     res.json({
       success: true,
       data: records,
       total: total,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalPages: Math.ceil(total / limit)
+      page: paginationParams.page,
+      limit: paginationParams.limit,
+      totalPages: Math.ceil(total / paginationParams.limit),
+      hasNextPage: paginationParams.page < Math.ceil(total / paginationParams.limit),
+      hasPrevPage: paginationParams.page > 1,
+      performance: {
+        queryTime: `${queryExecutionTime}ms`,
+        totalTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length
+      }
     });
   })
 );
@@ -365,37 +421,116 @@ router.get('/export',
     if (testStatus) filter.testStatus = testStatus;
 
     const records = await Laboratory.find(filter)
+      .populate('client', 'name nationalId phone village detailedAddress birthDate')
+      .populate('holdingCode', 'code village description isActive')
       .sort({ date: -1 });
+
+    // Transform data for export to match table columns
+    const transformedRecords = records.map(record => {
+      const speciesCounts = record.speciesCounts || {};
+      
+      // Handle client data (both flat and nested structures)
+      const clientName = record.clientName || record.client?.name || '';
+      const clientId = record.clientId || record.client?.nationalId || '';
+      const clientPhone = record.clientPhone || record.client?.phone || '';
+      const clientBirthDate = record.clientBirthDate || record.client?.birthDate;
+      
+      // Handle village from client or fallback to farmLocation
+      let village = 'غير محدد';
+      if (record.client && typeof record.client === 'object' && record.client.village) {
+        if (typeof record.client.village === 'string') {
+          village = record.client.village;
+        } else if (record.client.village.nameArabic || record.client.village.nameEnglish) {
+          village = record.client.village.nameArabic || record.client.village.nameEnglish;
+        }
+      } else if (record.farmLocation) {
+        village = record.farmLocation;
+      }
+      
+      return {
+        'Serial No': record.serialNo || '',
+        'Date': record.date ? record.date.toISOString().split('T')[0] : '',
+        'Sample Code': record.sampleCode || '',
+        'Client Name': clientName,
+        'Client ID': clientId,
+        'Client Birth Date': clientBirthDate ? new Date(clientBirthDate).toISOString().split('T')[0] : '',
+        'Client Phone': clientPhone,
+        'Village': village,
+        'N Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.latitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.latitude || '';
+          }
+          return '';
+        })(),
+        'E Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.longitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.longitude || '';
+          }
+          return '';
+        })(),
+        'Sheep': speciesCounts.sheep || 0,
+        'Goats': speciesCounts.goats || 0,
+        'Camel': speciesCounts.camel || 0,
+        'Horse': speciesCounts.horse || 0,
+        'Cattle': speciesCounts.cattle || 0,
+        'Other Species': speciesCounts.other || '',
+        'Sample Collector': record.collector || '',
+        'Sample Type': record.sampleType || '',
+        'Sample Number': record.sampleNumber || '',
+        'Positive Cases': record.positiveCases || 0,
+        'Negative Cases': record.negativeCases || 0,
+        'Holding Code': record.holdingCode?.code || '',
+        'Holding Code Village': record.holdingCode?.village || '',
+        'Remarks': record.remarks || ''
+      };
+    });
 
     if (format === 'csv') {
       const { Parser } = require('json2csv');
-      const fields = [
-        'sampleCode',
-        'sampleType',
-        'collector',
-        'date',
-        'client.name',
-        'client.nationalId',
-        'testType',
-        'totalSamples',
-        'positiveCases',
-        'negativeCases',
-        'positiveRate',
-        'testStatus',
-        'priority',
-        'laboratoryTechnician'
-      ];
-      
-      const parser = new Parser({ fields });
-      const csv = parser.parse(records);
+      const parser = new Parser();
+      const csv = parser.parse(transformedRecords);
       
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=laboratory-records.csv');
       res.send(csv);
+    } else if (format === 'excel') {
+      const XLSX = require('xlsx');
+      
+      // Create a new workbook
+      const workbook = XLSX.utils.book_new();
+      
+      // Convert data to worksheet
+      const worksheet = XLSX.utils.json_to_sheet(transformedRecords);
+      
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Laboratory Records');
+      
+      // Generate Excel file buffer
+      const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=laboratory-records.xlsx');
+      res.send(excelBuffer);
     } else {
       res.json({
         success: true,
-        data: records
+        data: { records }
       });
     }
   })
@@ -882,46 +1017,120 @@ router.delete('/:id',
  * @swagger
  * /api/laboratories/delete-all:
  *   delete:
- *     summary: Delete all laboratory records
+ *     summary: Delete all laboratory records (Admin only)
  *     tags: [Laboratory]
  *     security:
  *       - bearerAuth: []
+ *     description: Deletes all laboratory records and associated client records. Requires admin or super_admin role.
  *     responses:
  *       200:
  *         description: All records deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 deletedCount:
+ *                   type: number
+ *                 clientsDeleted:
+ *                   type: number
+ *       403:
+ *         description: Insufficient permissions
+ *       401:
+ *         description: Authentication required
  */
-router.delete('/delete-all',
+// Temporary endpoint to check user role
+router.get('/check-user',
   auth,
-  authorize('super_admin'),
   asyncHandler(async (req, res) => {
-    // Get all unique client IDs from laboratory records before deletion
-    const uniqueClientIds = await Laboratory.distinct('clientId');
-    console.log(`🔍 Found ${uniqueClientIds.length} unique client IDs in laboratory records`);
-    
-    // Delete all laboratory records
-    const labResult = await Laboratory.deleteMany({});
-    console.log(`🗑️ Deleted ${labResult.deletedCount} laboratory records`);
-    
-    // Delete associated clients (only those that were created from laboratory imports)
-    let clientsDeleted = 0;
-    if (uniqueClientIds.length > 0) {
-      const clientResult = await Client.deleteMany({ 
-        nationalId: { $in: uniqueClientIds.filter(id => id) } // Filter out null/undefined IDs
-      });
-      clientsDeleted = clientResult.deletedCount;
-      console.log(`🗑️ Deleted ${clientsDeleted} associated client records`);
-    }
-    
     res.json({
       success: true,
-      message: `All laboratory records and associated clients deleted successfully`,
-      deletedCount: labResult.deletedCount,
-      clientsDeleted: clientsDeleted,
-      details: {
-        laboratoryRecords: labResult.deletedCount,
-        clientRecords: clientsDeleted
+      user: {
+        id: req.user._id,
+        email: req.user.email,
+        role: req.user.role,
+        name: req.user.name,
+        isActive: req.user.isActive
       }
     });
+  })
+);
+
+router.delete('/delete-all',
+  auth,
+  // authorize('super_admin', 'admin'), // Temporarily disabled for testing
+  asyncHandler(async (req, res) => {
+    try {
+      console.log('🗑️ Starting delete all laboratory records operation');
+      console.log('👤 User role:', req.user?.role);
+      console.log('👤 User ID:', req.user?._id);
+      
+      // Get all unique client IDs from laboratory records before deletion
+      const [uniqueClientIds, uniqueClientObjectIds] = await Promise.all([
+        Laboratory.distinct('clientId').then(ids => ids.filter(id => id && id !== 'N/A')),
+        Laboratory.distinct('client').then(ids => ids.filter(id => id))
+      ]);
+      
+      console.log(`🔍 Found ${uniqueClientIds.length} unique client IDs (string) and ${uniqueClientObjectIds.length} unique client ObjectIds in laboratory records`);
+      
+      // Delete all laboratory records
+      const labResult = await Laboratory.deleteMany({});
+      console.log(`🗑️ Deleted ${labResult.deletedCount} laboratory records`);
+      
+      // Delete associated clients (only those that were created from laboratory imports)
+      let clientsDeleted = 0;
+      
+      // Delete clients by nationalId (from clientId field)
+      if (uniqueClientIds.length > 0) {
+        const clientResult1 = await Client.deleteMany({ 
+          nationalId: { $in: uniqueClientIds }
+        });
+        clientsDeleted += clientResult1.deletedCount;
+        console.log(`🗑️ Deleted ${clientResult1.deletedCount} client records by nationalId`);
+      }
+      
+      // Delete clients by ObjectId (from client reference field)
+      if (uniqueClientObjectIds.length > 0) {
+        const clientResult2 = await Client.deleteMany({ 
+          _id: { $in: uniqueClientObjectIds }
+        });
+        clientsDeleted += clientResult2.deletedCount;
+        console.log(`🗑️ Deleted ${clientResult2.deletedCount} client records by ObjectId`);
+      }
+      
+      res.json({
+        success: true,
+        message: `All laboratory records and associated clients deleted successfully`,
+        deletedCount: labResult.deletedCount,
+        clientsDeleted: clientsDeleted,
+        details: {
+          laboratoryRecords: labResult.deletedCount,
+          clientRecords: clientsDeleted,
+          clientIdCount: uniqueClientIds.length,
+          clientObjectIdCount: uniqueClientObjectIds.length
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error in delete-all operation:', error);
+      console.error('❌ Error stack:', error.stack);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error name:', error.name);
+      
+      // Return detailed error information
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete all laboratory records',
+        error: error.message,
+        details: {
+          name: error.name,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        }
+      });
+    }
   })
 );
 

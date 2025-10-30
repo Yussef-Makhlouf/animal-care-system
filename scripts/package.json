@@ -1,0 +1,25 @@
+{
+  "name": "ahcp-performance-scripts",
+  "version": "1.0.0",
+  "description": "Performance optimization and testing scripts for Animal Health Care Platform",
+  "scripts": {
+    "add-indexes": "node add-database-indexes.js",
+    "test-performance": "node performance-test.js",
+    "extract-filters": "node extract-filter-values.js",
+    "test-all": "npm run add-indexes && npm run test-performance"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "dotenv": "^16.6.1",
+    "mongoose": "^7.8.7"
+  },
+  "keywords": [
+    "performance",
+    "database",
+    "optimization",
+    "mongodb",
+    "testing"
+  ],
+  "author": "AHCP Development Team",
+  "license": "MIT"
+}

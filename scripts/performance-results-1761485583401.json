@@ -1,0 +1,344 @@
+{
+  "timestamp": "2025-10-26T13:33:03.402Z",
+  "summary": {
+    "totalRequests": 37,
+    "successful": 0,
+    "failed": 37,
+    "averageDuration": 0
+  },
+  "results": [
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - No filters",
+      "duration": 16,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.181Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Small page size",
+      "duration": 12,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.307Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Large page size",
+      "duration": 17,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.434Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Health status filter",
+      "duration": 12,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.551Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Insecticide status filter",
+      "duration": 12,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.677Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Date range filter",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.797Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Multiple filters",
+      "duration": 7,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:00.918Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "ParasiteControl - Text search",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.044Z"
+    },
+    {
+      "endpoint": "/vaccination",
+      "description": "Vaccination - No filters",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.169Z"
+    },
+    {
+      "endpoint": "/vaccination",
+      "description": "Vaccination - Vaccine type filter",
+      "duration": 7,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.289Z"
+    },
+    {
+      "endpoint": "/vaccination",
+      "description": "Vaccination - Health status filter",
+      "duration": 10,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.414Z"
+    },
+    {
+      "endpoint": "/vaccination",
+      "description": "Vaccination - Multiple filters",
+      "duration": 6,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.535Z"
+    },
+    {
+      "endpoint": "/vaccination",
+      "description": "Vaccination - Date range filter",
+      "duration": 7,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.645Z"
+    },
+    {
+      "endpoint": "/laboratories",
+      "description": "Laboratory - No filters",
+      "duration": 8,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.755Z"
+    },
+    {
+      "endpoint": "/laboratories",
+      "description": "Laboratory - Sample type filter",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:01.880Z"
+    },
+    {
+      "endpoint": "/laboratories",
+      "description": "Laboratory - Test result filter",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.006Z"
+    },
+    {
+      "endpoint": "/laboratories",
+      "description": "Laboratory - Priority filter",
+      "duration": 8,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.129Z"
+    },
+    {
+      "endpoint": "/laboratories",
+      "description": "Laboratory - Multiple filters",
+      "duration": 8,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.239Z"
+    },
+    {
+      "endpoint": "/mobile-clinics",
+      "description": "MobileClinic - No filters",
+      "duration": 9,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.353Z"
+    },
+    {
+      "endpoint": "/mobile-clinics",
+      "description": "MobileClinic - Intervention category filter",
+      "duration": 6,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.472Z"
+    },
+    {
+      "endpoint": "/mobile-clinics",
+      "description": "MobileClinic - Follow-up required filter",
+      "duration": 5,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.580Z"
+    },
+    {
+      "endpoint": "/mobile-clinics",
+      "description": "MobileClinic - Diagnosis filter",
+      "duration": 7,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.693Z"
+    },
+    {
+      "endpoint": "/mobile-clinics",
+      "description": "MobileClinic - Multiple filters",
+      "duration": 5,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.802Z"
+    },
+    {
+      "endpoint": "/parasite-control/statistics",
+      "description": "Statistics - /parasite-control/statistics",
+      "duration": 6,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:02.914Z"
+    },
+    {
+      "endpoint": "/parasite-control/detailed-statistics",
+      "description": "Statistics - /parasite-control/detailed-statistics",
+      "duration": 5,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.022Z"
+    },
+    {
+      "endpoint": "/vaccination/statistics",
+      "description": "Statistics - /vaccination/statistics",
+      "duration": 5,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.131Z"
+    },
+    {
+      "endpoint": "/laboratories/statistics",
+      "description": "Statistics - /laboratories/statistics",
+      "duration": 5,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.241Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 1",
+      "duration": 34,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.381Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 2",
+      "duration": 33,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.383Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 3",
+      "duration": 33,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.384Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 4",
+      "duration": 33,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.385Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 5",
+      "duration": 33,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.387Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 6",
+      "duration": 34,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.389Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 7",
+      "duration": 37,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.392Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 8",
+      "duration": 38,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.395Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 9",
+      "duration": 38,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.396Z"
+    },
+    {
+      "endpoint": "/parasite-control",
+      "description": "Stress Test - Request 10",
+      "duration": 39,
+      "status": 0,
+      "error": "Error",
+      "success": false,
+      "timestamp": "2025-10-26T13:33:03.398Z"
+    }
+  ]
+}

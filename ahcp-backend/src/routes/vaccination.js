@@ -6,6 +6,8 @@ const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { checkSectionAccessWithMessage } = require('../middleware/sectionAuth');
 const { handleTemplate, handleImport, findOrCreateClient } = require('../utils/importExportHelpers');
+const queryLogger = require('../utils/queryLogger');
+const filterBuilder = require('../utils/filterBuilder');
 
 const router = express.Router();
 
@@ -62,86 +64,116 @@ router.get('/',
   auth,
   validateQuery(schemas.dateRangeQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 30, startDate, endDate, vaccineType, vaccineCategory, supervisor, search } = req.query;
-    const skip = (page - 1) * limit;
+    const startTime = Date.now();
+    
+    console.log('🔍 Vaccination Backend - Received query params:', req.query);
+    
+    // Build advanced filter using FilterBuilder
+    const filter = filterBuilder.buildVaccinationFilter(req.query);
+    const paginationParams = filterBuilder.buildPaginationParams(req.query);
+    const sortParams = filterBuilder.buildSortParams(req.query);
 
-    // Build filter
-    const filter = {};
-    if (startDate && endDate) {
-      filter.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-    if (vaccineType) {
-      filter.vaccineType = { $regex: vaccineType, $options: 'i' };
-    }
-    if (vaccineCategory) {
-      filter.vaccineCategory = vaccineCategory;
-    }
-    if (supervisor) {
-      filter.supervisor = { $regex: supervisor, $options: 'i' };
-    }
-    if (search) {
-      filter.$or = [
-        { serialNo: { $regex: search, $options: 'i' } },
-        { supervisor: { $regex: search, $options: 'i' } },
-        { team: { $regex: search, $options: 'i' } },
-        { vehicleNo: { $regex: search, $options: 'i' } },
-        { vaccineType: { $regex: search, $options: 'i' } }
-      ];
-    }
+    console.log('📋 Built vaccination filter object:', JSON.stringify(filter, null, 2));
+    console.log('📄 Pagination params:', paginationParams);
 
-    // Get records with error handling
-    let records;
+    // Execute query with performance tracking
+    const queryStartTime = Date.now();
+    
+    let records, total;
     try {
-      records = await Vaccination.find(filter)
-        .populate({
-          path: 'client',
-          select: 'name nationalId phone village detailedAddress birthDate',
-          populate: {
-            path: 'village',
-            select: 'nameArabic nameEnglish sector serialNumber'
-          }
-        })
-        .populate('holdingCode', 'code village description isActive')
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean(); // Use lean() for better performance
+      // Execute both queries in parallel for better performance
+      [records, total] = await Promise.all([
+        Vaccination.find(filter)
+          .populate({
+            path: 'client',
+            select: 'name nationalId phone village detailedAddress birthDate',
+            populate: {
+              path: 'village',
+              select: 'nameArabic nameEnglish sector serialNumber'
+            }
+          })
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(), // Use lean() for better performance
+        Vaccination.countDocuments(filter)
+      ]);
     } catch (populateError) {
-      console.error('Populate error, falling back to basic query:', populateError);
-      // Fallback without populate if there's an issue
-      records = await Vaccination.find(filter)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean();
+      console.error('🚨 Vaccination populate error, falling back to basic query:', populateError);
+      // Fallback with basic populate if there's an issue
+      [records, total] = await Promise.all([
+        Vaccination.find(filter)
+          .populate('client', 'name nationalId phone village detailedAddress birthDate')
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(),
+        Vaccination.countDocuments(filter)
+      ]);
     }
 
-    // If still no records, return empty array
+    // Ensure records is always an array
     if (!records) {
       records = [];
     }
 
-    let total = 0;
-    try {
-      total = await Vaccination.countDocuments(filter);
-    } catch (countError) {
-      console.error('Error counting documents:', countError);
-      total = 0;
+    const queryExecutionTime = Date.now() - queryStartTime;
+    const totalExecutionTime = Date.now() - startTime;
+
+    // Log performance with detailed metrics
+    queryLogger.log(
+      'Vaccination Query',
+      filter,
+      queryExecutionTime,
+      records.length,
+      {
+        totalRecords: total,
+        pagination: paginationParams,
+        totalExecutionTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length,
+        hasPopulation: true
+      }
+    );
+
+    // Get query explanation for development environment
+    if (process.env.NODE_ENV === 'development' && Object.keys(filter).length > 0) {
+      try {
+        const explanation = await queryLogger.explainQuery(Vaccination, filter);
+        if (explanation) {
+          console.log('🔍 Vaccination Query Performance Analysis:', {
+            indexesUsed: explanation.indexesUsed,
+            documentsExamined: explanation.documentsExamined,
+            keysExamined: explanation.keysExamined,
+            efficiency: explanation.keysExamined > 0 ? 
+              (explanation.documentsExamined / explanation.keysExamined).toFixed(2) : 'N/A'
+          });
+        }
+      } catch (explainError) {
+        console.warn('⚠️ Could not explain vaccination query:', explainError.message);
+      }
     }
+
+    console.log(`📊 Vaccination query results: Found ${records.length} records out of ${total} total matching filter`);
 
     res.json({
       success: true,
       data: {
         records,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: paginationParams.page,
+          limit: paginationParams.limit,
           total,
-          pages: Math.ceil(total / limit)
+          pages: Math.ceil(total / paginationParams.limit),
+          hasNextPage: paginationParams.page < Math.ceil(total / paginationParams.limit),
+          hasPrevPage: paginationParams.page > 1
         }
+      },
+      performance: {
+        queryTime: `${queryExecutionTime}ms`,
+        totalTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length
       }
     });
   })
@@ -407,49 +439,88 @@ router.get('/export',
       .populate('holdingCode', 'code village description isActive')
       .sort({ date: -1 });
 
-    // Transform data for export
+    // Transform data for export to match table columns exactly
     const transformedRecords = records.map(record => {
       const herdCounts = record.herdCounts || {};
       const totalFemales = (herdCounts.sheep?.female || 0) + (herdCounts.goats?.female || 0) + 
                           (herdCounts.camel?.female || 0) + (herdCounts.cattle?.female || 0);
       
+      // Handle village from client or holdingCode
+      let village = 'غير محدد';
+      if (record.client && typeof record.client === 'object' && record.client.village) {
+        if (typeof record.client.village === 'string') {
+          village = record.client.village;
+        } else if (record.client.village.nameArabic || record.client.village.nameEnglish) {
+          village = record.client.village.nameArabic || record.client.village.nameEnglish;
+        }
+      } else if (record.holdingCode && typeof record.holdingCode === 'object' && record.holdingCode.village) {
+        village = record.holdingCode.village;
+      }
+      
       return {
-        'Serial No': record.serialNo,
+        'Serial No': record.serialNo || '',
         'Date': record.date ? record.date.toISOString().split('T')[0] : '',
-        'Name': record.client?.name || '',
-        'ID': record.client?.nationalId || '',
-        'Birth Date': record.client?.birthDate ? record.client.birthDate.toISOString().split('T')[0] : '',
-        'Phone': record.client?.phone || '',
-        'Holding Code': record.holdingCode?.code || '',
-        'N Coordinate': record.coordinates?.latitude || '',
-        'E Coordinate': record.coordinates?.longitude || '',
+        'Client Name': record.client?.name || '',
+        'Client ID': record.client?.nationalId || '',
+        'Client Birth Date': record.client?.birthDate ? record.client.birthDate.toISOString().split('T')[0] : '',
+        'Client Phone': record.client?.phone || '',
+        'Village': village,
+        'N Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.latitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.latitude || '';
+          }
+          return '';
+        })(),
+        'E Coordinate': (() => {
+          if (record.coordinates) {
+            if (typeof record.coordinates === 'string') {
+              try {
+                const parsed = JSON.parse(record.coordinates);
+                return parsed.longitude || '';
+              } catch (e) {
+                return '';
+              }
+            }
+            return record.coordinates.longitude || '';
+          }
+          return '';
+        })(),
         'Supervisor': record.supervisor || '',
-        'Team': record.team || '',
-        'Vehicle No.': record.vehicleNo || '',
-        'Sheep': herdCounts.sheep?.total || 0,
-        'F. Sheep': herdCounts.sheep?.female || 0,
-        'Vaccinated Sheep': herdCounts.sheep?.vaccinated || 0,
-        'Goats': herdCounts.goats?.total || 0,
-        'F.Goats': herdCounts.goats?.female || 0,
-        'Vaccinated Goats': herdCounts.goats?.vaccinated || 0,
-        'Camel': herdCounts.camel?.total || 0,
-        'F. Camel': herdCounts.camel?.female || 0,
-        'Vaccinated Camels': herdCounts.camel?.vaccinated || 0,
-        'Cattel': herdCounts.cattle?.total || 0,
-        'F. Cattle': herdCounts.cattle?.female || 0,
-        'Vaccinated Cattle': herdCounts.cattle?.vaccinated || 0,
-        'Herd Number': (herdCounts.sheep?.total || 0) + (herdCounts.goats?.total || 0) + (herdCounts.camel?.total || 0) + (herdCounts.cattle?.total || 0),
-        'Herd Females': totalFemales,
+        'Vehicle No': record.vehicleNo || '',
+        'Sheep Total': herdCounts.sheep?.total || 0,
+        'Sheep Female': herdCounts.sheep?.female || 0,
+        'Sheep Vaccinated': herdCounts.sheep?.vaccinated || 0,
+        'Goats Total': herdCounts.goats?.total || 0,
+        'Goats Female': herdCounts.goats?.female || 0,
+        'Goats Vaccinated': herdCounts.goats?.vaccinated || 0,
+        'Camel Total': herdCounts.camel?.total || 0,
+        'Camel Female': herdCounts.camel?.female || 0,
+        'Camel Vaccinated': herdCounts.camel?.vaccinated || 0,
+        'Cattle Total': herdCounts.cattle?.total || 0,
+        'Cattle Female': herdCounts.cattle?.female || 0,
+        'Cattle Vaccinated': herdCounts.cattle?.vaccinated || 0,
+        'Total Herd': (herdCounts.sheep?.total || 0) + (herdCounts.goats?.total || 0) + (herdCounts.camel?.total || 0) + (herdCounts.cattle?.total || 0),
+        'Total Females': totalFemales,
         'Total Vaccinated': (herdCounts.sheep?.vaccinated || 0) + (herdCounts.goats?.vaccinated || 0) + (herdCounts.camel?.vaccinated || 0) + (herdCounts.cattle?.vaccinated || 0),
         'Herd Health': record.herdHealth || '',
         'Animals Handling': record.animalsHandling || '',
         'Labours': record.labours || '',
         'Reachable Location': record.reachableLocation || '',
         'Request Date': record.request?.date ? record.request.date.toISOString().split('T')[0] : '',
-        'Situation': record.request?.situation || '',
+        'Request Situation': record.request?.situation || '',
         'Request Fulfilling Date': record.request?.fulfillingDate ? record.request.fulfillingDate.toISOString().split('T')[0] : '',
-        'Vaccine': record.vaccineType || '',
-        'Category': record.vaccineCategory || '',
+        'Holding Code': record.holdingCode?.code || '',
+        'Holding Code Village': record.holdingCode?.village || '',
+        'Vaccine Type': record.vaccineType || '',
+        'Vaccine Category': record.vaccineCategory || '',
         'Remarks': record.remarks || ''
       };
     });

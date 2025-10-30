@@ -7,6 +7,8 @@ const Client = require('../models/Client');
 const { validate, validateQuery, schemas } = require('../middleware/validation');
 const { auth, authorize } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
+const queryLogger = require('../utils/queryLogger');
+const filterBuilder = require('../utils/filterBuilder');
 // Import/Export functionality moved to import-export routes
 
 const router = express.Router();
@@ -90,6 +92,46 @@ const upload = multer({
  *         schema:
  *           type: string
  *         description: Filter by supervisor
+ *       - in: query
+ *         name: insecticide.method
+ *         schema:
+ *           type: string
+ *         description: Filter by insecticide method (comma-separated)
+ *       - in: query
+ *         name: insecticide.category
+ *         schema:
+ *           type: string
+ *         description: Filter by insecticide category (comma-separated)
+ *       - in: query
+ *         name: insecticide.status
+ *         schema:
+ *           type: string
+ *         description: Filter by insecticide status (comma-separated)
+ *       - in: query
+ *         name: insecticide.type
+ *         schema:
+ *           type: string
+ *         description: Filter by insecticide type (comma-separated)
+ *       - in: query
+ *         name: herdHealthStatus
+ *         schema:
+ *           type: string
+ *         description: Filter by herd health status (comma-separated)
+ *       - in: query
+ *         name: complyingToInstructions
+ *         schema:
+ *           type: string
+ *         description: Filter by compliance status
+ *       - in: query
+ *         name: parasiteControlStatus
+ *         schema:
+ *           type: string
+ *         description: Filter by parasite control status
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search by serial number, supervisor, vehicle number, client name, client national ID, or client phone
  *     responses:
  *       200:
  *         description: Records retrieved successfully
@@ -98,80 +140,111 @@ router.get('/',
   auth,
   validateQuery(schemas.dateRangeQuery),
   asyncHandler(async (req, res) => {
-    const { page = 1, limit = 30, startDate, endDate, supervisor, search } = req.query;
-    const skip = (page - 1) * limit;
+    const startTime = Date.now();
+    
+    console.log('🔍 ParasiteControl Backend - Received query params:', req.query);
+    
+    // Build advanced filter using FilterBuilder
+    const filter = filterBuilder.buildParasiteControlFilter(req.query);
+    const paginationParams = filterBuilder.buildPaginationParams(req.query);
+    const sortParams = filterBuilder.buildSortParams(req.query);
 
-    // Build filter
-    const filter = {};
-    if (startDate && endDate) {
-      filter.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-    if (supervisor) {
-      filter.supervisor = { $regex: supervisor, $options: 'i' };
-    }
-    if (search) {
-      filter.$or = [
-        { serialNo: { $regex: search, $options: 'i' } },
-        { supervisor: { $regex: search, $options: 'i' } },
-        { vehicleNo: { $regex: search, $options: 'i' } },
-      ];
-    }
+    console.log('📋 Built filter object:', JSON.stringify(filter, null, 2));
+    console.log('📄 Pagination params:', paginationParams);
 
-    // Get records with error handling
-    let records;
+    // Execute query with performance tracking
+    const queryStartTime = Date.now();
+    
+    let records, total;
     try {
-      records = await ParasiteControl.find(filter)
-        .populate({
-          path: 'client',
-          select: 'name nationalId phone village detailedAddress birthDate',
-          populate: {
-            path: 'village',
-            select: 'nameArabic nameEnglish sector serialNumber'
-          }
-        })
-        .populate('holdingCode', 'code village description isActive')
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean(); // Use lean() for better performance and avoid virtual issues
+      // Execute both queries in parallel for better performance
+      [records, total] = await Promise.all([
+        ParasiteControl.find(filter)
+          .populate({
+            path: 'client',
+            select: 'name nationalId phone village detailedAddress birthDate',
+            populate: {
+              path: 'village',
+              select: 'nameArabic nameEnglish sector serialNumber'
+            }
+          })
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(), // Use lean() for better performance
+        ParasiteControl.countDocuments(filter)
+      ]);
     } catch (populateError) {
-      console.error('Populate error, falling back to basic query:', populateError);
+      console.error('🚨 Populate error, falling back to basic query:', populateError);
       // Fallback with basic populate if there's an issue
-      records = await ParasiteControl.find(filter)
-        .populate('client', 'name nationalId phone village detailedAddress birthDate')
-        .populate('holdingCode', 'code village description isActive')
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ date: -1 })
-        .lean();
+      [records, total] = await Promise.all([
+        ParasiteControl.find(filter)
+          .populate('client', 'name nationalId phone village detailedAddress birthDate')
+          .populate('holdingCode', 'code village description isActive')
+          .sort(sortParams)
+          .skip(paginationParams.skip)
+          .limit(paginationParams.limit)
+          .lean(),
+        ParasiteControl.countDocuments(filter)
+      ]);
     }
 
-    const total = await ParasiteControl.countDocuments(filter);
+    const queryExecutionTime = Date.now() - queryStartTime;
+    const totalExecutionTime = Date.now() - startTime;
 
-    // Debug logging for holding code (can be removed in production)
-    // if (records.length > 0) {
-    //   console.log('🔍 API Debug - First record holding code:', {
-    //     recordId: records[0]._id,
-    //     serialNo: records[0].serialNo,
-    //     holdingCode: records[0].holdingCode,
-    //     holdingCodeType: typeof records[0].holdingCode,
-    //     hasHoldingCode: !!records[0].holdingCode
-    //   });
-    // }
+    // Log performance with detailed metrics
+    queryLogger.log(
+      'ParasiteControl Query',
+      filter,
+      queryExecutionTime,
+      records.length,
+      {
+        totalRecords: total,
+        pagination: paginationParams,
+        totalExecutionTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length,
+        hasPopulation: true
+      }
+    );
+
+    // Get query explanation for development environment
+    if (process.env.NODE_ENV === 'development' && Object.keys(filter).length > 0) {
+      try {
+        const explanation = await queryLogger.explainQuery(ParasiteControl, filter);
+        if (explanation) {
+          console.log('🔍 Query Performance Analysis:', {
+            indexesUsed: explanation.indexesUsed,
+            documentsExamined: explanation.documentsExamined,
+            keysExamined: explanation.keysExamined,
+            efficiency: explanation.keysExamined > 0 ? 
+              (explanation.documentsExamined / explanation.keysExamined).toFixed(2) : 'N/A'
+          });
+        }
+      } catch (explainError) {
+        console.warn('⚠️ Could not explain query:', explainError.message);
+      }
+    }
+
+    console.log(`📊 Query results: Found ${records.length} records out of ${total} total matching filter`);
 
     res.json({
       success: true,
       data: {
         records,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: paginationParams.page,
+          limit: paginationParams.limit,
           total,
-          pages: Math.ceil(total / limit)
+          pages: Math.ceil(total / paginationParams.limit),
+          hasNextPage: paginationParams.page < Math.ceil(total / paginationParams.limit),
+          hasPrevPage: paginationParams.page > 1
         }
+      },
+      performance: {
+        queryTime: `${queryExecutionTime}ms`,
+        totalTime: `${totalExecutionTime}ms`,
+        filterComplexity: Object.keys(filter).length
       }
     });
   })
@@ -469,11 +542,58 @@ router.get('/export',
           'Date': record.date ? record.date.toISOString().split('T')[0] : '',
           'Name': record.client?.name || '',
           'ID': record.client?.nationalId || '',
-          'Date of Birth': record.client?.birthDate ? record.client.birthDate.toISOString().split('T')[0] : '',
+          'Client Birth Date': (() => {
+            const birthDate = record.client?.birthDate;
+            if (birthDate) {
+              try {
+                return new Date(birthDate).toISOString().split('T')[0];
+              } catch (e) {
+                return '';
+              }
+            }
+            return '';
+          })(),
+          'Village': (() => {
+            if (record.client && typeof record.client === 'object' && record.client.village) {
+              if (typeof record.client.village === 'string') {
+                return record.client.village;
+              } else if (record.client.village.nameArabic || record.client.village.nameEnglish) {
+                return record.client.village.nameArabic || record.client.village.nameEnglish;
+              }
+            }
+            return 'غير محدد';
+          })(),
           'Phone': record.client?.phone || '',
           'Holding Code': record.holdingCode?.code || '',
-          'E': record.coordinates?.latitude || '',
-          'N': record.coordinates?.longitude || '',
+          'Holding Code Village': record.holdingCode?.village || '',
+          'N Coordinate': (() => {
+            if (record.coordinates) {
+              if (typeof record.coordinates === 'string') {
+                try {
+                  const parsed = JSON.parse(record.coordinates);
+                  return parsed.latitude || '';
+                } catch (e) {
+                  return '';
+                }
+              }
+              return record.coordinates.latitude || '';
+            }
+            return '';
+          })(),
+          'E Coordinate': (() => {
+            if (record.coordinates) {
+              if (typeof record.coordinates === 'string') {
+                try {
+                  const parsed = JSON.parse(record.coordinates);
+                  return parsed.longitude || '';
+                } catch (e) {
+                  return '';
+                }
+              }
+              return record.coordinates.longitude || '';
+            }
+            return '';
+          })(),
           'Supervisor': record.supervisor || '',
           'Vehicle No.': record.vehicleNo || '',
           'Total Sheep': herdCounts.sheep?.total || 0,
@@ -501,6 +621,9 @@ router.get('/export',
           'Insecticide Volume (ml)': record.insecticide?.volumeMl || 0,
           'Insecticide Status': record.insecticide?.status || '',
           'Insecticide Category': record.insecticide?.category || '',
+          'Insecticide Summary': record.insecticide ? 
+            `${record.insecticide.type || ''} - ${record.insecticide.method || ''} - ${record.insecticide.volumeMl || 0}ml - ${record.insecticide.status || ''}` : 
+            '',
           'Animal Barn Size (sqM)': record.animalBarnSizeSqM || 0,
           'Breeding Sites': record.breedingSites || '',
           'Herd Health Status': record.herdHealthStatus || '',
@@ -554,12 +677,13 @@ router.get('/:id',
     const record = await ParasiteControl.findById(req.params.id)
       .populate({
         path: 'client',
-        select: 'name nationalId phone village detailedAddress birthDate holdingCode',
+        select: 'name nationalId phone village detailedAddress birthDate',
         populate: {
-          path: 'holdingCode',
-          select: 'code village description isActive'
+          path: 'village',
+          select: 'nameArabic nameEnglish sector serialNumber'
         }
       })
+      .populate('holdingCode', 'code village description isActive')
       .populate('createdBy', 'name email role')
       .populate('updatedBy', 'name email role');
 
@@ -890,23 +1014,41 @@ router.put('/:id',
 
     // Handle holding code - convert to ObjectId if provided
     let holdingCodeId = null;
-    if (req.body.holdingCode && req.body.holdingCode !== null && req.body.holdingCode.trim() !== '') {
+    console.log('🔍 PUT - Raw holdingCode from request:', {
+      value: req.body.holdingCode,
+      type: typeof req.body.holdingCode,
+      isNull: req.body.holdingCode === null,
+      isUndefined: req.body.holdingCode === undefined,
+      isEmpty: req.body.holdingCode === '',
+      length: req.body.holdingCode?.length
+    });
+    
+    if (req.body.holdingCode && req.body.holdingCode !== null && typeof req.body.holdingCode === 'string' && req.body.holdingCode.trim() !== '') {
       const mongoose = require('mongoose');
-      if (mongoose.Types.ObjectId.isValid(req.body.holdingCode)) {
-        holdingCodeId = req.body.holdingCode;
+      const trimmedCode = req.body.holdingCode.trim();
+      console.log('🔍 PUT - Trimmed holdingCode:', trimmedCode);
+      console.log('🔍 PUT - Is valid ObjectId?', mongoose.Types.ObjectId.isValid(trimmedCode));
+      
+      if (mongoose.Types.ObjectId.isValid(trimmedCode)) {
+        holdingCodeId = trimmedCode;
+        console.log('✅ PUT - Using holdingCode as ObjectId:', holdingCodeId);
       } else {
         // If it's a code string, find the holding code by code
+        console.log('🔍 PUT - Searching for holdingCode by code:', trimmedCode);
         const HoldingCode = require('../models/HoldingCode');
-        const holdingCode = await HoldingCode.findOne({ code: req.body.holdingCode.trim() });
+        const holdingCode = await HoldingCode.findOne({ code: trimmedCode });
         if (holdingCode) {
           holdingCodeId = holdingCode._id;
+          console.log('✅ PUT - Found holdingCode by code:', holdingCodeId);
+        } else {
+          console.log('❌ PUT - No holdingCode found with code:', trimmedCode);
         }
       }
+    } else {
+      console.log('⚠️ PUT - holdingCode is null, undefined, or empty - will be set to null');
     }
-    console.log('🔍 PUT - Holding code processing:', req.body.holdingCode, '→', holdingCodeId);
-    console.log('🔍 PUT - Holding code type:', typeof req.body.holdingCode);
-    const mongoose = require('mongoose');
-    console.log('🔍 PUT - Holding code is valid ObjectId:', mongoose.Types.ObjectId.isValid(req.body.holdingCode));
+    
+    console.log('🎯 PUT - Final holdingCodeId to save:', holdingCodeId);
     updateData.holdingCode = holdingCodeId;
 
     // Update record

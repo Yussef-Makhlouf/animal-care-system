@@ -76,7 +76,15 @@ const auth = async (req, res, next) => {
  */
 const authorize = (...roles) => {
   return (req, res, next) => {
+    console.log('🔐 Authorization check:', {
+      requiredRoles: roles,
+      userExists: !!req.user,
+      userRole: req.user?.role,
+      userId: req.user?._id
+    });
+
     if (!req.user) {
+      console.log('❌ Authorization failed: No user');
       return res.status(401).json({
         success: false,
         message: 'Authentication required.',
@@ -86,10 +94,28 @@ const authorize = (...roles) => {
 
     // Super admin has access to everything
     if (req.user.role === 'super_admin') {
+      console.log('✅ Authorization passed: Super admin');
       return next();
     }
 
-    if (!roles.includes(req.user.role)) {
+    // Map 'supervisor' to 'section_supervisor' for backward compatibility
+    const normalizedRoles = roles.map(role => 
+      role === 'supervisor' ? 'section_supervisor' : role
+    );
+
+    // Check if user role matches (also handle section_supervisor as supervisor)
+    const userRole = req.user.role;
+    const hasAccess = normalizedRoles.includes(userRole) || 
+                     (userRole === 'section_supervisor' && roles.includes('supervisor'));
+
+    console.log('🔍 Authorization details:', {
+      userRole,
+      normalizedRoles,
+      hasAccess
+    });
+
+    if (!hasAccess) {
+      console.log('❌ Authorization failed: Insufficient permissions');
       return res.status(403).json({
         success: false,
         message: 'Access denied. Insufficient permissions.',
@@ -99,6 +125,7 @@ const authorize = (...roles) => {
       });
     }
 
+    console.log('✅ Authorization passed');
     next();
   };
 };
